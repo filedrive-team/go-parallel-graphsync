@@ -1,4 +1,4 @@
-package paragraphsync
+package pargraphsync
 
 import (
 	"context"
