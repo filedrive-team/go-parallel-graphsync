@@ -21,9 +21,7 @@ import (
 	carv2bs "github.com/ipld/go-car/v2/blockstore"
 	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
-	"github.com/ipld/go-ipld-prime/node/basicnode"
-	"github.com/ipld/go-ipld-prime/traversal/selector"
-	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
+	selectorparse "github.com/ipld/go-ipld-prime/traversal/selector/parse"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/host"
@@ -74,7 +72,7 @@ func TestGraphSync(t *testing.T) {
 	fmt.Printf("requester peerId=%s\n", host.ID())
 
 	gs.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
-		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d\n", p.String(), blockData.Index(), blockData.BlockSize())
+		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
 	})
 	gs.RegisterIncomingResponseHook(func(p peer.ID, responseData graphsync.ResponseData, hookActions graphsync.IncomingResponseHookActions) {
 		reqId := responseData.RequestID().String()
@@ -124,6 +122,8 @@ func TestGraphSync(t *testing.T) {
 	var responseProgress <-chan graphsync.ResponseProgress
 	var errors <-chan error
 
+	// QmTTSVQrNxBvQDXevh3UvToezMw1XQ5hvTMCwpDc8SDnNT
+	// Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y
 	root, _ := cid.Parse("Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y")
 
 	servKeyFile := path.Join(os.TempDir(), "gs-key0")
@@ -141,10 +141,8 @@ func TestGraphSync(t *testing.T) {
 	}
 	host.Peerstore().AddAddr(peerId, addr, peerstore.PermanentAddrTTL)
 	// create a selector to traverse the whole tree
-	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
-	allSelector := ssb.ExploreRecursive(selector.RecursionLimitDepth(10),
-		ssb.ExploreAll(ssb.ExploreRecursiveEdge())).Node()
-	// allSelector:= selectorparse.CommonSelector_ExploreAllRecursively
+	allSelector := selectorparse.CommonSelector_ExploreAllRecursively
+
 	responseProgress, errors = gs.Request(context.TODO(), peerId, cidlink.Link{root}, allSelector)
 	go func() {
 		select {
@@ -156,7 +154,7 @@ func TestGraphSync(t *testing.T) {
 	}()
 
 	for blk := range responseProgress {
-		fmt.Sprintf("%+v", blk)
+		fmt.Sprintf("%+v\n", blk)
 	}
 
 	// restore to a file
@@ -170,7 +168,10 @@ func TestGraphSync(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		NodeWriteTo(file, "./src")
+		err = NodeWriteTo(file, "./src2")
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -284,10 +285,11 @@ func startGraphSyncService(ctx context.Context, listenAddr string, keyFile strin
 			fmt.Printf("RegisterIncomingRequestHook peer=%s request id=%s root=%s err=%v\n", p.String(), id, root, err)
 		}
 		fmt.Printf("RegisterIncomingRequestHook peer=%s request id=%s root=%s selecter=%s\n", p.String(), id, root, b.String())
+		hookActions.ValidateRequest()
 	})
 
 	exchange.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
-		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d\n", p.String(), blockData.Index(), blockData.BlockSize())
+		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
 	})
 	exchange.RegisterIncomingResponseHook(func(p peer.ID, responseData graphsync.ResponseData, hookActions graphsync.IncomingResponseHookActions) {
 		reqId := responseData.RequestID().String()
