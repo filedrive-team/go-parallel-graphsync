@@ -154,7 +154,7 @@ func TestGraphSync(t *testing.T) {
 	}()
 
 	for blk := range responseProgress {
-		fmt.Sprintf("%+v\n", blk)
+		fmt.Printf("path=%s \n", blk.Path.String())
 	}
 
 	// restore to a file

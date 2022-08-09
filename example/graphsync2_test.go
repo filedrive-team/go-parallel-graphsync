@@ -3,14 +3,11 @@ package example
 import (
 	"context"
 	"fmt"
-	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
-	"github.com/filedrive-team/go-parallel-graphsync/impl"
 	"github.com/ipfs/go-blockservice"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
 	dssync "github.com/ipfs/go-datastore/sync"
 	"github.com/ipfs/go-graphsync"
-	gsnet "github.com/ipfs/go-graphsync/network"
 	"github.com/ipfs/go-graphsync/storeutil"
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	offline "github.com/ipfs/go-ipfs-exchange-offline"
@@ -21,18 +18,16 @@ import (
 	"github.com/ipld/go-ipld-prime/node/basicnode"
 	"github.com/ipld/go-ipld-prime/traversal/selector"
 	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
-	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/peerstore"
-	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/multiformats/go-multiaddr"
 	"os"
 	"path"
+	"sync"
 	"testing"
 )
 
-func TestParallelGraphSync(t *testing.T) {
+func TestGraphSync2(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 	const ServicesNum = 3
@@ -51,7 +46,7 @@ func TestParallelGraphSync(t *testing.T) {
 	//}
 	//bs := blockstore.NewBlockstore(ds)
 
-	host, gs, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9320", keyFile, bs)
+	host, gs, err := startGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9320", keyFile, bs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,6 +100,8 @@ func TestParallelGraphSync(t *testing.T) {
 		fmt.Printf("RegisterRequestUpdatedHook request requestId=%s\n", request.ID().String())
 	})
 
+	var errors <-chan error
+
 	// QmTTSVQrNxBvQDXevh3UvToezMw1XQ5hvTMCwpDc8SDnNT
 	// Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y
 	root, _ := cid.Parse("Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y")
@@ -136,7 +133,7 @@ func TestParallelGraphSync(t *testing.T) {
 		})).Node()
 	sels = append(sels, selector3)
 
-	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
+	var wg sync.WaitGroup
 	for i := 0; i < ServicesNum; i++ {
 		servKeyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key%d", i))
 		privKey, err := loadOrInitPeerKey(servKeyFile)
@@ -153,26 +150,19 @@ func TestParallelGraphSync(t *testing.T) {
 		}
 		host.Peerstore().AddAddr(peerId, addr, peerstore.PermanentAddrTTL)
 
-		params = append(params, pargraphsync.RequestParam{
-			PeerId:   peerId,
-			Root:     cidlink.Link{root},
-			Selector: sels[i],
-		})
-	}
-
-	responseProgress, errors := gs.RequestMany(mainCtx, params)
-	go func() {
-		select {
-		case err := <-errors:
-			if err != nil {
-				t.Fatal(err)
+		_, errors = gs.Request(context.TODO(), peerId, cidlink.Link{root}, sels[i])
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case err := <-errors:
+				if err != nil {
+					t.Fatal(err)
+				}
 			}
-		}
-	}()
-
-	for blk := range responseProgress {
-		fmt.Printf("path=%s \n", blk.Path.String())
+		}()
 	}
+	wg.Wait()
 
 	// restore to a file
 	if false {
@@ -190,34 +180,4 @@ func TestParallelGraphSync(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-}
-
-func startPraGraphSyncClient(ctx context.Context, listenAddr string, keyFile string, bs blockstore.Blockstore) (host.Host, pargraphsync.ParallelGraphExchange, error) {
-	peerkey, err := loadOrInitPeerKey(keyFile)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	cmgr, err := connmgr.NewConnManager(2000, 3000)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	opts := []libp2p.Option{
-		libp2p.ListenAddrStrings(listenAddr),
-		libp2p.ConnectionManager(cmgr),
-		libp2p.Identity(peerkey),
-		libp2p.DefaultTransports,
-	}
-
-	host, err := libp2p.New(opts...)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	lsys := storeutil.LinkSystemForBlockstore(bs)
-
-	network := gsnet.NewFromLibp2pHost(host)
-	exchange := impl.New(ctx, network, lsys)
-	return host, exchange, nil
 }

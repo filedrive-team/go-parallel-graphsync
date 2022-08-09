@@ -14,7 +14,9 @@ require (
 	github.com/ipfs/go-ipfs-files v0.0.9
 	github.com/ipfs/go-ipld-cbor v0.0.6-0.20211211231443-5d9b9e1f6fa8 // indirect
 	github.com/ipfs/go-ipld-format v0.4.0 // indirect
+	github.com/ipfs/go-log/v2 v2.5.1
 	github.com/ipfs/go-merkledag v0.6.0
+	github.com/ipfs/go-peertaskqueue v0.7.1
 	github.com/ipfs/go-unixfs v0.3.1
 	github.com/ipld/go-car/v2 v2.4.1
 	github.com/ipld/go-ipld-prime v0.18.0
@@ -29,7 +31,8 @@ require (
 	github.com/smartystreets/assertions v1.0.1 // indirect
 	github.com/stretchr/testify v1.7.1 // indirect
 	github.com/whyrusleeping/cbor-gen v0.0.0-20220323183124-98fa8256a799 // indirect
-	go.opentelemetry.io/otel v1.3.0 // indirect
+	go.opentelemetry.io/otel v1.3.0
+	go.opentelemetry.io/otel/trace v1.3.0
 	golang.org/x/exp v0.0.0-20210715201039-d37aa40e8013 // indirect
 	golang.org/x/xerrors v0.0.0-20220411194840-2f41105eb62f
 	gopkg.in/yaml.v3 v3.0.0 // indirect
