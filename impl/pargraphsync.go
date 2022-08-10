@@ -335,12 +335,16 @@ func (gs *ParallelGraphSync) RequestMany(ctx context.Context, reqParams []pargra
 		go func(param pargraphsync.RequestParam) {
 			defer wg.Done()
 			resp, errs := gs.Request(ctx, param.PeerId, param.Root, param.Selector, param.Extensions...)
-			go func() {
-				for r := range resp {
-					returnedResponses <- r
-				}
-			}()
+			//go func() {
+			//	for r := range resp {
+			//		returnedResponses <- r
+			//	}
+			//}()
 
+			// go func OR for loop?
+			for r := range resp {
+				returnedResponses <- r
+			}
 			for e := range errs {
 				returnedErrors <- e
 			}
