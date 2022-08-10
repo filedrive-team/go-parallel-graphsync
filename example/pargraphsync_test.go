@@ -195,7 +195,7 @@ func TestParallelGraphSync(t *testing.T) {
 
 func BenchmarkGraphSync(b *testing.B) {
 	fmt.Printf("BenchmarkParallelGraphSync\n ")
-	b.SetParallelism(10)
+	//b.SetParallelism(10)
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 	const ServicesNum = 3
