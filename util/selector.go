@@ -70,15 +70,10 @@ func DivideMapSelector(selectors ipld.Node, num int64) ([]ipld.Node, error) {
 		}
 		node := ssb.ExploreRecursive(selector.RecursionLimitNone(),
 			ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
-				specBuilder.Insert("Links", ssb.ExploreRange(start, end,
-					ssb.ExploreUnion(ssb.ExploreAll(ssb.ExploreRecursiveEdge()))))
+				specBuilder.Insert("Links", ssb.ExploreUnion(ssb.ExploreRange(start, end,
+					ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
+					ssb.ExploreIndex(0, ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())))))
 			})).Node()
-		//var s strings.Builder
-		//err := dagjson.Encode(node, &s)
-		//if err != nil {
-		//	fmt.Printf("Encode%v\n", err)
-		//}
-		//fmt.Printf("the %v node ,%s\n", i+1, s.String())
 		sels = append(sels, node)
 		start = end
 	}
