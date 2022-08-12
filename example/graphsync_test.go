@@ -50,7 +50,7 @@ import (
 func TestGraphSync(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
-	err := startSomeGraphSyncServices(t, mainCtx, 1)
+	err := startSomeGraphSyncServices(t, mainCtx, 1, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func loadCarV2Blockstore(path string) (*carv2bs.ReadOnly, error) {
 	return bs, nil
 }
 
-func startGraphSyncService(ctx context.Context, listenAddr string, keyFile string, bs blockstore.Blockstore) (graphsync.GraphExchange, error) {
+func startGraphSyncService(ctx context.Context, listenAddr string, keyFile string, bs blockstore.Blockstore, printLog bool) (graphsync.GraphExchange, error) {
 	peerkey, err := loadOrInitPeerKey(keyFile)
 	if err != nil {
 		return nil, err
@@ -269,7 +269,9 @@ func startGraphSyncService(ctx context.Context, listenAddr string, keyFile strin
 		return nil, err
 	}
 
-	fmt.Printf("host multiAddrs: %v\n", host.Addrs())
+	if printLog {
+		fmt.Printf("host multiAddrs: %v\n", host.Addrs())
+	}
 
 	lsys := storeutil.LinkSystemForBlockstore(bs)
 
@@ -284,52 +286,55 @@ func startGraphSyncService(ctx context.Context, listenAddr string, keyFile strin
 		if err != nil {
 			fmt.Printf("RegisterIncomingRequestHook peer=%s request id=%s root=%s err=%v\n", p.String(), id, root, err)
 		}
-		fmt.Printf("RegisterIncomingRequestHook peer=%s request id=%s root=%s selecter=%s\n", p.String(), id, root, b.String())
+		if printLog {
+			fmt.Printf("RegisterIncomingRequestHook peer=%s request id=%s root=%s selecter=%s\n", p.String(), id, root, b.String())
+		}
 		hookActions.ValidateRequest()
 	})
-
-	exchange.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
-		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
-	})
-	exchange.RegisterIncomingResponseHook(func(p peer.ID, responseData graphsync.ResponseData, hookActions graphsync.IncomingResponseHookActions) {
-		reqId := responseData.RequestID().String()
-		status := responseData.Status().String()
-		fmt.Printf("RegisterIncomingResponseHook peer=%s response requestId=%s status=%s\n", p.String(), reqId, status)
-	})
-	exchange.RegisterIncomingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.IncomingRequestHookActions) {
-		fmt.Printf("RegisterIncomingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	exchange.RegisterBlockSentListener(func(p peer.ID, request graphsync.RequestData, block graphsync.BlockData) {
-		fmt.Printf("RegisterBlockSentListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	exchange.RegisterCompletedResponseListener(func(p peer.ID, request graphsync.RequestData, status graphsync.ResponseStatusCode) {
-		fmt.Printf("RegisterCompletedResponseListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	exchange.RegisterIncomingRequestQueuedHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.RequestQueuedHookActions) {
-		fmt.Printf("RegisterIncomingRequestQueuedHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	exchange.RegisterNetworkErrorListener(func(p peer.ID, request graphsync.RequestData, err error) {
-		fmt.Printf("RegisterNetworkErrorListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	exchange.RegisterOutgoingBlockHook(func(p peer.ID, request graphsync.RequestData, block graphsync.BlockData, hookActions graphsync.OutgoingBlockHookActions) {
-		fmt.Printf("RegisterOutgoingBlockHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	exchange.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
-		fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	// not init, is it a bug?
-	//gs.RegisterOutgoingRequestProcessingListener(func(p peer.ID, request graphsync.RequestData, inProgressRequestCount int) {
-	//	fmt.Printf("request requestId=%s\n", request.ID().String())
-	//})
-	exchange.RegisterReceiverNetworkErrorListener(func(p peer.ID, err error) {
-		fmt.Printf("RegisterReceiverNetworkErrorListener peer=%s error=%s\n", p.String(), err)
-	})
-	exchange.RegisterRequestorCancelledListener(func(p peer.ID, request graphsync.RequestData) {
-		fmt.Printf("RegisterRequestorCancelledListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	exchange.RegisterRequestUpdatedHook(func(p peer.ID, request graphsync.RequestData, updateRequest graphsync.RequestData, hookActions graphsync.RequestUpdatedHookActions) {
-		fmt.Printf("RegisterRequestUpdatedHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
+	if printLog {
+		exchange.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
+			fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
+		})
+		exchange.RegisterIncomingResponseHook(func(p peer.ID, responseData graphsync.ResponseData, hookActions graphsync.IncomingResponseHookActions) {
+			reqId := responseData.RequestID().String()
+			status := responseData.Status().String()
+			fmt.Printf("RegisterIncomingResponseHook peer=%s response requestId=%s status=%s\n", p.String(), reqId, status)
+		})
+		exchange.RegisterIncomingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.IncomingRequestHookActions) {
+			fmt.Printf("RegisterIncomingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
+		})
+		exchange.RegisterBlockSentListener(func(p peer.ID, request graphsync.RequestData, block graphsync.BlockData) {
+			fmt.Printf("RegisterBlockSentListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
+		})
+		exchange.RegisterCompletedResponseListener(func(p peer.ID, request graphsync.RequestData, status graphsync.ResponseStatusCode) {
+			fmt.Printf("RegisterCompletedResponseListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
+		})
+		exchange.RegisterIncomingRequestQueuedHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.RequestQueuedHookActions) {
+			fmt.Printf("RegisterIncomingRequestQueuedHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
+		})
+		exchange.RegisterNetworkErrorListener(func(p peer.ID, request graphsync.RequestData, err error) {
+			fmt.Printf("RegisterNetworkErrorListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
+		})
+		exchange.RegisterOutgoingBlockHook(func(p peer.ID, request graphsync.RequestData, block graphsync.BlockData, hookActions graphsync.OutgoingBlockHookActions) {
+			fmt.Printf("RegisterOutgoingBlockHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
+		})
+		exchange.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
+			fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
+		})
+		// not init, is it a bug?
+		//gs.RegisterOutgoingRequestProcessingListener(func(p peer.ID, request graphsync.RequestData, inProgressRequestCount int) {
+		//	fmt.Printf("request requestId=%s\n", request.ID().String())
+		//})
+		exchange.RegisterReceiverNetworkErrorListener(func(p peer.ID, err error) {
+			fmt.Printf("RegisterReceiverNetworkErrorListener peer=%s error=%s\n", p.String(), err)
+		})
+		exchange.RegisterRequestorCancelledListener(func(p peer.ID, request graphsync.RequestData) {
+			fmt.Printf("RegisterRequestorCancelledListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
+		})
+		exchange.RegisterRequestUpdatedHook(func(p peer.ID, request graphsync.RequestData, updateRequest graphsync.RequestData, hookActions graphsync.RequestUpdatedHookActions) {
+			fmt.Printf("RegisterRequestUpdatedHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
+		})
+	}
 	return exchange, nil
 }
 
@@ -363,15 +368,19 @@ func startGraphSyncClient(ctx context.Context, listenAddr string, keyFile string
 	return host, exchange, nil
 }
 
-func startSomeGraphSyncServices(t *testing.T, ctx context.Context, number int) error {
+func startSomeGraphSyncServices(t *testing.T, ctx context.Context, number int, printLog bool) error {
 	bs, err := loadCarV2Blockstore("./car-v2.car")
 	if err != nil {
 		return err
 	}
+	return startSomeGraphSyncServicesByBlockStore(t, ctx, number, bs, printLog)
+}
+
+func startSomeGraphSyncServicesByBlockStore(t *testing.T, ctx context.Context, number int, bs blockstore.Blockstore, printLog bool) error {
 	for i := 0; i < number; i++ {
 		go func(i int) {
 			keyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key%d", i))
-			_, err := startGraphSyncService(ctx, fmt.Sprintf("/ip4/0.0.0.0/tcp/931%d", i), keyFile, bs)
+			_, err := startGraphSyncService(ctx, fmt.Sprintf("/ip4/0.0.0.0/tcp/931%d", i), keyFile, bs, printLog)
 			if err != nil {
 				t.Fatal(err)
 			}

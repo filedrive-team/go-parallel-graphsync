@@ -1,6 +1,7 @@
 package example
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
@@ -15,9 +16,14 @@ import (
 	gsnet "github.com/ipfs/go-graphsync/network"
 	"github.com/ipfs/go-graphsync/storeutil"
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
+	chunker "github.com/ipfs/go-ipfs-chunker"
 	offline "github.com/ipfs/go-ipfs-exchange-offline"
+	files "github.com/ipfs/go-ipfs-files"
+	ipldformat "github.com/ipfs/go-ipld-format"
 	"github.com/ipfs/go-merkledag"
 	unixfile "github.com/ipfs/go-unixfs/file"
+	"github.com/ipfs/go-unixfs/importer/balanced"
+	ihelper "github.com/ipfs/go-unixfs/importer/helpers"
 	dagpb "github.com/ipld/go-codec-dagpb"
 	"github.com/ipld/go-ipld-prime/datamodel"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
@@ -32,6 +38,7 @@ import (
 	"github.com/libp2p/go-libp2p-core/peerstore"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/multiformats/go-multiaddr"
+	"math/rand"
 	"os"
 	"path"
 	"strings"
@@ -43,7 +50,7 @@ func TestParallelGraphSync(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 	const ServicesNum = 3
-	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum)
+	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,32 +123,11 @@ func TestParallelGraphSync(t *testing.T) {
 	// Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y
 	root, _ := cid.Parse("Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y")
 
-	// create a selector to traverse the whole tree
-	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
-
-	sels := make([]datamodel.Node, 0)
-	selector1 := ssb.ExploreRecursive(selector.RecursionLimitDepth(10),
-		ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
-			specBuilder.Insert("Links", ssb.ExploreRange(0, 3,
-				ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))))
-		})).Node()
-	sels = append(sels, selector1)
-
-	selector2 := ssb.ExploreRecursive(selector.RecursionLimitDepth(10),
-		ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
-			specBuilder.Insert("Links", ssb.ExploreUnion(ssb.ExploreRange(3, 7,
-				ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
-				ssb.ExploreIndex(0, ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())))))
-		})).Node()
-	sels = append(sels, selector2)
-
-	selector3 := ssb.ExploreRecursive(selector.RecursionLimitDepth(10),
-		ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
-			specBuilder.Insert("Links", ssb.ExploreUnion(ssb.ExploreRange(7, 11,
-				ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
-				ssb.ExploreIndex(0, ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())))))
-		})).Node()
-	sels = append(sels, selector3)
+	sels := []datamodel.Node{
+		GenerateSelecter(0, 3),
+		GenerateSelecter(3, 7),
+		GenerateSelecter(7, 11),
+	}
 
 	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
 	for i := 0; i < ServicesNum; i++ {
@@ -198,11 +184,12 @@ func TestParallelGraphSync(t *testing.T) {
 		}
 	}
 }
+
 func TestGraphSyncSelectorFromMulPath(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 	const ServicesNum = 3
-	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum)
+	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,115 +319,34 @@ func TestGraphSyncSelectorFromMulPath(t *testing.T) {
 }
 
 func BenchmarkGraphSync(b *testing.B) {
-	fmt.Printf("BenchmarkParallelGraphSync\n ")
 	//b.SetParallelism(10)
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 	const ServicesNum = 3
-	err := startSomeGraphSyncServices(&testing.T{}, mainCtx, ServicesNum)
+	servbs, root := CreateRandomBytesBlockStore(mainCtx, 290*1024*1024)
+	err := startSomeGraphSyncServicesByBlockStore(&testing.T{}, mainCtx, ServicesNum, servbs, false)
 	if err != nil {
 		b.Fatal(err)
 	}
 	keyFile := path.Join(os.TempDir(), "gs-key")
 	ds := datastore.NewMapDatastore()
 	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
-	//dsPath := path.Join(os.TempDir(), "gs-ds")
-	//ds, err := levelds.NewDatastore(dsPath, nil)
-	//if err != nil {
-	//	t.Fatal(err)
-	//}
-	//bs := blockstore.NewBlockstore(ds)
 
 	host, gs, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9320", keyFile, bs)
 	if err != nil {
 		b.Fatal(err)
 	}
-	fmt.Printf("requester peerId=%s\n", host.ID())
 
-	gs.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
-		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
-	})
-	gs.RegisterIncomingResponseHook(func(p peer.ID, responseData graphsync.ResponseData, hookActions graphsync.IncomingResponseHookActions) {
-		reqId := responseData.RequestID().String()
-		status := responseData.Status().String()
-		fmt.Printf("RegisterIncomingResponseHook peer=%s response requestId=%s status=%s\n", p.String(), reqId, status)
-	})
-	gs.RegisterIncomingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.IncomingRequestHookActions) {
-		fmt.Printf("RegisterIncomingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterBlockSentListener(func(p peer.ID, request graphsync.RequestData, block graphsync.BlockData) {
-		fmt.Printf("RegisterBlockSentListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterCompletedResponseListener(func(p peer.ID, request graphsync.RequestData, status graphsync.ResponseStatusCode) {
-		fmt.Printf("RegisterCompletedResponseListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterIncomingRequestQueuedHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.RequestQueuedHookActions) {
-		fmt.Printf("RegisterIncomingRequestQueuedHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterNetworkErrorListener(func(p peer.ID, request graphsync.RequestData, err error) {
-		fmt.Printf("RegisterNetworkErrorListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterOutgoingBlockHook(func(p peer.ID, request graphsync.RequestData, block graphsync.BlockData, hookActions graphsync.OutgoingBlockHookActions) {
-		fmt.Printf("RegisterOutgoingBlockHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
 	gs.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
-		fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	// uninitialized, is it a bug?
-	//gs.RegisterOutgoingRequestProcessingListener(func(p peer.ID, request graphsync.RequestData, inProgressRequestCount int) {
-	//	fmt.Printf("request requestId=%s\n", request.ID().String())
-	//})
-	memds := datastore.NewMapDatastore()
-	membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
-	newlsys := storeutil.LinkSystemForBlockstore(membs)
-	gs.RegisterPersistenceOption("newLinkSys", newlsys)
-
-	gs.RegisterReceiverNetworkErrorListener(func(p peer.ID, err error) {
-		fmt.Printf("RegisterReceiverNetworkErrorListener error=%s\n", err)
-	})
-	gs.RegisterRequestorCancelledListener(func(p peer.ID, request graphsync.RequestData) {
-		fmt.Printf("RegisterRequestorCancelledListener request requestId=%s\n", request.ID().String())
-	})
-	gs.RegisterRequestUpdatedHook(func(p peer.ID, request graphsync.RequestData, updateRequest graphsync.RequestData, hookActions graphsync.RequestUpdatedHookActions) {
-		fmt.Printf("RegisterRequestUpdatedHook request requestId=%s\n", request.ID().String())
+		//	fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
+		hookActions.UsePersistenceOption("newLinkSys")
 	})
 
-	// QmTTSVQrNxBvQDXevh3UvToezMw1XQ5hvTMCwpDc8SDnNT
-	// Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y
-	root, _ := cid.Parse("Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y")
-
-	// create a selector to traverse the whole tree
-	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
-
-	sels := make([]datamodel.Node, 0)
-	selector1 := ssb.ExploreRecursive(selector.RecursionLimitDepth(10),
-		ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
-			specBuilder.Insert("Links", ssb.ExploreRange(0, 3,
-				ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))))
-		})).Node()
-	sels = append(sels, selector1)
-
-	selector2 := ssb.ExploreRecursive(selector.RecursionLimitDepth(10),
-		ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
-			specBuilder.Insert("Links", ssb.ExploreUnion(ssb.ExploreRange(3, 7,
-				ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
-				ssb.ExploreIndex(0, ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())))))
-		})).Node()
-	sels = append(sels, selector2)
-
-	selector3 := ssb.ExploreRecursive(selector.RecursionLimitDepth(10),
-		ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
-			specBuilder.Insert("Links", ssb.ExploreUnion(ssb.ExploreRange(7, 15,
-				ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
-				ssb.ExploreIndex(0, ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())))))
-		})).Node()
-	selector015 := ssb.ExploreRecursive(selector.RecursionLimitDepth(10),
-		ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
-			specBuilder.Insert("Links", ssb.ExploreUnion(ssb.ExploreRange(0, 15,
-				ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
-				ssb.ExploreIndex(0, ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())))))
-		})).Node()
-	sels = append(sels, selector3)
+	sels := []datamodel.Node{
+		GenerateSelecter(0, 100),
+		GenerateSelecter(100, 200),
+		GenerateSelecter(200, 300),
+	}
 	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
 	for i := 0; i < ServicesNum; i++ {
 		servKeyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key%d", i))
@@ -464,11 +370,19 @@ func BenchmarkGraphSync(b *testing.B) {
 			Selector: sels[i],
 		})
 	}
-	var timeCost1, timeCost3 int64
-	b.Run("3 service", func(b *testing.B) {
+	b.Run("request to 3 service", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			timeStart := time.Now()
+			b.StopTimer()
+			gs.UnregisterPersistenceOption("newLinkSys")
+			memds := datastore.NewMapDatastore()
+			membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
+			newlsys := storeutil.LinkSystemForBlockstore(membs)
+			if err := gs.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+				b.Fatal(err)
+			}
+			b.StartTimer()
+
 			ctx := context.Background()
 			responseProgress, errors := gs.RequestMany(ctx, params)
 			go func() {
@@ -479,19 +393,25 @@ func BenchmarkGraphSync(b *testing.B) {
 					}
 				}
 			}()
-			for blk := range responseProgress {
-				fmt.Printf("path=%s \n", blk.Path.String())
+			for range responseProgress {
 			}
-			timeCost3 = time.Now().Sub(timeStart).Milliseconds()
 		}
-
 	})
-	b.Run("1 service", func(b *testing.B) {
+	b.Run("request to 1 service", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			timeStart := time.Now()
+			b.StopTimer()
+			gs.UnregisterPersistenceOption("newLinkSys")
+			memds := datastore.NewMapDatastore()
+			membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
+			newlsys := storeutil.LinkSystemForBlockstore(membs)
+			if err := gs.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+				b.Fatal(err)
+			}
+			b.StartTimer()
+
 			ctx := context.Background()
-			responseProgress, errors := gs.Request(ctx, params[0].PeerId, params[0].Root, selector015)
+			responseProgress, errors := gs.Request(ctx, params[0].PeerId, params[0].Root, GenerateSelecter(0, 300))
 			go func() {
 				select {
 				case err := <-errors:
@@ -500,17 +420,24 @@ func BenchmarkGraphSync(b *testing.B) {
 					}
 				}
 			}()
-
-			for blk := range responseProgress {
-				fmt.Printf("path=%s \n", blk.Path.String())
+			for range responseProgress {
 			}
-			timeCost1 = time.Now().Sub(timeStart).Milliseconds()
+			has, err := membs.Has(mainCtx, root)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if !has {
+				b.Fatal("not pass")
+			}
 		}
-
 	})
-
-	fmt.Println("1 service timeCost=", timeCost1, "ms")
-	fmt.Println("3 services timeCost=", timeCost3, "ms")
+	has, err := bs.Has(mainCtx, root)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if has {
+		b.Fatal("not pass")
+	}
 
 }
 
@@ -518,7 +445,7 @@ func TestParallelGraphSyncDivideSelector(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 	const ServicesNum = 3
-	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum)
+	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -646,7 +573,7 @@ func TestParallelGraphSyncWithoutRange(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 	const ServicesNum = 3
-	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum)
+	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -828,4 +755,48 @@ func startPraGraphSyncClient(ctx context.Context, listenAddr string, keyFile str
 	network := gsnet.NewFromLibp2pHost(host)
 	exchange := impl.New(ctx, network, lsys)
 	return host, exchange, nil
+}
+
+func CreateRandomBytesBlockStore(ctx context.Context, dataSize int) (blockstore.Blockstore, cid.Cid) {
+	ds := datastore.NewMapDatastore()
+	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
+	dagService := merkledag.NewDAGService(blockservice.New(bs, offline.Exchange(bs)))
+
+	// random data
+	data := make([]byte, dataSize)
+	_, err := rand.New(rand.NewSource(time.Now().UnixNano())).Read(data)
+
+	buf := bytes.NewReader(data)
+	file := files.NewReaderFile(buf)
+
+	// import to UnixFS
+	bufferedDS := ipldformat.NewBufferedDAG(ctx, dagService)
+
+	params := ihelper.DagBuilderParams{
+		Maxlinks:   1024,
+		RawLeaves:  true,
+		CidBuilder: nil,
+		Dagserv:    bufferedDS,
+	}
+
+	// split data into 1024000 bytes size chunks then DAGify it
+	db, err := params.New(chunker.NewSizeSplitter(file, int64(1024000)))
+	nd, err := balanced.Layout(db)
+	err = bufferedDS.Commit()
+
+	if err != nil {
+		panic(err)
+	}
+
+	return bs, nd.Cid()
+}
+
+func GenerateSelecter(start, end int64) datamodel.Node {
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	return ssb.ExploreRecursive(selector.RecursionLimitNone(),
+		ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+			specBuilder.Insert("Links", ssb.ExploreUnion(ssb.ExploreRange(start, end,
+				ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
+				ssb.ExploreIndex(0, ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())))))
+		})).Node()
 }
