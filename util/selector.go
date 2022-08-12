@@ -10,8 +10,18 @@ import (
 	selectorparse "github.com/ipld/go-ipld-prime/traversal/selector/parse"
 	textselector "github.com/ipld/go-ipld-selector-text-lite"
 	"golang.org/x/xerrors"
+	"regexp"
+	"strconv"
 	"strings"
 )
+
+// PathValidCharset is the regular expression fully matching a valid textselector
+const PathValidCharset = `[- _0-9a-zA-Z\/\.]`
+
+// Expression is a string-type input to SelectorSpecFromMulPath
+type Expression string
+
+var invalidChar = regexp.MustCompile(`[^` + PathValidCharset[1:len(PathValidCharset)-1] + `]`)
 
 func GetDataSelector(dps *string, matchPath bool) (datamodel.Node, error) {
 	sel := selectorparse.CommonSelector_ExploreAllRecursively
@@ -45,7 +55,17 @@ func GetDataSelector(dps *string, matchPath bool) (datamodel.Node, error) {
 
 	return sel, nil
 }
-func DivideMapSelector(selectors ipld.Node, num int64) ([]ipld.Node, error) {
+
+/*
+DivideMapRangeSelector divide a  map-range-selectors in to a list of map-range-selectors
+each of which is a list of map-range-selectors
+ e.g. {"R":{":>":{"f":{"f>":{"Links":{"r":{"$":11,">":{"|":[{"a":{">":{"@":{}}}}]},"^":1}}}}},"l":{"none":{}}}}
+num=3 will be divided into
+	-selecter1 `{"R":{":>":{"f":{"f>":{"Links":{"|":[{"r":{"$":4,">":{"|":[{".":{}},{"a":{">":{"@":{}}}}]},"^":1}},{"i":{">":{"|":[{".":{}},{"a":{">":{"@":{}}}}]},"i":0}}]}}}},"l":{"none":{}}}}`
+	-selecter2 `{"R":{":>":{"f":{"f>":{"Links":{"|":[{"r":{"$":7,">":{"|":[{".":{}},{"a":{">":{"@":{}}}}]},"^":4}},{"i":{">":{"|":[{".":{}},{"a":{">":{"@":{}}}}]},"i":0}}]}}}},"l":{"none":{}}}}`
+	-selecter3 `{"R":{":>":{"f":{"f>":{"Links":{"|":[{"r":{"$":11,">":{"|":[{".":{}},{"a":{">":{"@":{}}}}]},"^":7}},{"i":{">":{"|":[{".":{}},{"a":{">":{"@":{}}}}]},"i":0}}]}}}},"l":{"none":{}}}}`
+*/
+func DivideMapRangeSelector(selectors ipld.Node, num int64) ([]ipld.Node, error) {
 	sels := make([]ipld.Node, 0, num)
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
 	//{"R":{":>":{"f":{"f>":{"Links":{"r":{"$":11,">":{"|":[{"a":{">":{"@":{}}}}]},"^":1}}}}},"l":{"none":{}}}}
@@ -147,4 +167,88 @@ func GetStartAndEndOfRange(selectors ipld.Node) (int64, int64) {
 		}
 	}
 	return startValue, endValue
+}
+
+/*
+SelectorSpecFromMulPath transforms a textual path specification in the form x/y/1-3 (means 1,2,3)
+into a go-ipld-prime selector-spec object. This is a short-term stop-gap on the
+road to a more versatile text-based selector description mechanism. Therefore
+the accepted syntax is relatively inflexible, and restricted to the members of
+PathValidCharset. The parsing rules are:
+
+	- The character `/` is a path segment separator
+	- The character `-` is a range separator
+	- An empty segment ( `...//...` ) and the unix-like `.` and `..` are illegal
+	- Any other valid segment is treated as a key within a map, or (if applicable)
+	  as an index within an array
+*/
+func SelectorSpecFromMulPath(path Expression, matchPath bool, optionalSubselectorAtTarget builder.SelectorSpec) (builder.SelectorSpec, error) {
+
+	if path == "/" {
+		return nil, fmt.Errorf("a standalone '/' is not a valid path")
+	} else if m := invalidChar.FindStringIndex(string(path)); m != nil {
+		return nil, fmt.Errorf("path string contains invalid character at offset %d", m[0])
+	}
+
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+
+	ss := optionalSubselectorAtTarget
+	// if nothing is given - use an exact matcher
+	if ss == nil {
+		ss = ssb.Matcher()
+	}
+
+	segments := strings.Split(string(path), "/")
+	mulpath := false
+	var start, end int64 = -1, -1
+	// walk backwards wrapping the original selector recursively
+	for i := len(segments) - 1; i >= 0; i-- {
+		if segments[i] == "" {
+			// allow one leading and one trailing '/' at most
+			if i == 0 || i == len(segments)-1 {
+				continue
+			}
+			return nil, fmt.Errorf("invalid empty segment at position %d", i)
+		}
+
+		if segments[i] == "." || segments[i] == ".." {
+			return nil, fmt.Errorf("unsupported path segment '%s' at position %d", segments[i], i)
+		}
+		if strings.Contains(segments[i], "-") {
+			var err error
+			ranges := strings.Split(segments[i], "-")
+			startStr, endStr := ranges[0], ranges[1]
+			start, err = strconv.ParseInt(startStr, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid start range '%s' at position %d", startStr, i)
+			}
+			end, err = strconv.ParseInt(endStr, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid end range '%s' at position %d", endStr, i)
+			}
+			if start >= end {
+				return nil, fmt.Errorf("range not valid '%s' at position %d", segments[i], i)
+			}
+			mulpath = true
+		}
+		if mulpath {
+			ss = ssb.ExploreRecursive(selector.RecursionLimitNone(),
+				ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+					specBuilder.Insert("Links", ssb.ExploreUnion(ssb.ExploreRange(start, end,
+						ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
+						ssb.ExploreIndex(0, ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())))))
+				}))
+
+		} else {
+			ss = ssb.ExploreFields(func(efsb builder.ExploreFieldsSpecBuilder) {
+				efsb.Insert(segments[i], ss)
+			})
+
+			if matchPath {
+				ss = ssb.ExploreUnion(ssb.Matcher(), ss)
+			}
+		}
+	}
+
+	return ss, nil
 }

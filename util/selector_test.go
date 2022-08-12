@@ -23,7 +23,7 @@ func TestSplitMapSelector(t *testing.T) {
 			specBuilder.Insert("Links", ssb.ExploreRange(1, 11,
 				ssb.ExploreUnion(ssb.ExploreAll(ssb.ExploreRecursiveEdge()))))
 		})).Node()
-	splitSelector, err := DivideMapSelector(selectors, 3)
+	splitSelector, err := DivideMapRangeSelector(selectors, 3)
 	if err != nil {
 		return
 	}
@@ -41,3 +41,24 @@ func TestSplitMapSelector(t *testing.T) {
 //selecter2 `{"R":{":>":{"f":{"f>":{"Links":{"|":[{"r":{"$":7,">":{"|":[{".":{}},{"a":{">":{"@":{}}}}]},"^":4}},{"i":{">":{"|":[{".":{}},{"a":{">":{"@":{}}}}]},"i":0}}]}}}},"l":{"none":{}}}}`
 //selecter1 `{"R":{":>":{"f":{"f>":{"Links":{"|":[{"r":{"$":4,">":{"|":[{".":{}},{"a":{">":{"@":{}}}}]},"^":1}},{"i":{">":{"|":[{".":{}},{"a":{">":{"@":{}}}}]},"i":0}}]}}}},"l":{"none":{}}}}`
 //selecter3 `{"R":{":>":{"f":{"f>":{"Links":{"|":[{"r":{"$":11,">":{"|":[{".":{}},{"a":{">":{"@":{}}}}]},"^":7}},{"i":{">":{"|":[{".":{}},{"a":{">":{"@":{}}}}]},"i":0}}]}}}},"l":{"none":{}}}}`
+
+func Test_SelectorSpecFromMulPath(t *testing.T) {
+	dps := "Links/0/Hash/Links/7-11"
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+
+	selspec, err := SelectorSpecFromMulPath(
+		Expression(dps), true,
+		ssb.ExploreRecursive(
+			selector.RecursionLimitNone(),
+			ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())),
+		),
+	)
+	if err != nil {
+		fmt.Printf("failed to parse text-selector '%s': %v", dps, err)
+	}
+
+	sel := selspec.Node()
+	var s strings.Builder
+	dagjson.Encode(sel, &s)
+	fmt.Printf("%v\n", s.String())
+}
