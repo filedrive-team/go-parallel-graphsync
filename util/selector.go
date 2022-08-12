@@ -57,7 +57,7 @@ func GetDataSelector(dps *string, matchPath bool) (datamodel.Node, error) {
 }
 
 /*
-DivideMapRangeSelector divide a  map-range-selectors in to a list of map-range-selectors
+DivideMapSelector divide a  map-range-selectors in to a list of map-range-selectors
 each of which is a list of map-range-selectors
  e.g. {"R":{":>":{"f":{"f>":{"Links":{"r":{"$":11,">":{"|":[{"a":{">":{"@":{}}}}]},"^":1}}}}},"l":{"none":{}}}}
 num=3 will be divided into
@@ -65,17 +65,22 @@ num=3 will be divided into
 	-selecter2 `{"R":{":>":{"f":{"f>":{"Links":{"|":[{"r":{"$":7,">":{"|":[{".":{}},{"a":{">":{"@":{}}}}]},"^":4}},{"i":{">":{"|":[{".":{}},{"a":{">":{"@":{}}}}]},"i":0}}]}}}},"l":{"none":{}}}}`
 	-selecter3 `{"R":{":>":{"f":{"f>":{"Links":{"|":[{"r":{"$":11,">":{"|":[{".":{}},{"a":{">":{"@":{}}}}]},"^":7}},{"i":{">":{"|":[{".":{}},{"a":{">":{"@":{}}}}]},"i":0}}]}}}},"l":{"none":{}}}}`
 */
-func DivideMapRangeSelector(selectors ipld.Node, num int64) ([]ipld.Node, error) {
+func DivideMapSelector(selectors ipld.Node, num int64, linkNums int64) ([]ipld.Node, error) {
 	sels := make([]ipld.Node, 0, num)
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
 	//{"R":{":>":{"f":{"f>":{"Links":{"r":{"$":11,">":{"|":[{"a":{">":{"@":{}}}}]},"^":1}}}}},"l":{"none":{}}}}
 	if selectors.Kind() != datamodel.Kind_Map {
 		return nil, fmt.Errorf("selector split rejected: selector must be a map")
 	}
-	if selectors == selectorparse.CommonSelector_ExploreAllRecursively {
-		return nil, fmt.Errorf("selector split rejected: selector is ExploreAllRecursively")
+	if (selectors == selectorparse.CommonSelector_ExploreAllRecursively || selectors == selectorparse.CommonSelector_MatchAllRecursively) && linkNums <= 0 {
+		return nil, fmt.Errorf("selector split rejected: selector is ExploreAllRecursively ,but linkNums <=0")
 	}
-	startValue, endValue := GetStartAndEndOfRange(selectors)
+	startValue, endValue := int64(-1), int64(-1)
+	if selectors == selectorparse.CommonSelector_ExploreAllRecursively || selectors == selectorparse.CommonSelector_MatchAllRecursively {
+		startValue, endValue = int64(0), linkNums
+	} else {
+		startValue, endValue = GetStartAndEndOfRange(selectors)
+	}
 	if startValue >= endValue {
 		return nil, fmt.Errorf("selector split rejected: end field must be greater than start field in ExploreRange selector")
 	}

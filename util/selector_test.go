@@ -6,6 +6,7 @@ import (
 	"github.com/ipld/go-ipld-prime/node/basicnode"
 	"github.com/ipld/go-ipld-prime/traversal/selector"
 	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
+	selectorparse "github.com/ipld/go-ipld-prime/traversal/selector/parse"
 	"strings"
 	"testing"
 )
@@ -23,7 +24,7 @@ func TestSplitMapSelector(t *testing.T) {
 			specBuilder.Insert("Links", ssb.ExploreRange(1, 11,
 				ssb.ExploreUnion(ssb.ExploreAll(ssb.ExploreRecursiveEdge()))))
 		})).Node()
-	splitSelector, err := DivideMapRangeSelector(selectors, 3)
+	splitSelector, err := DivideMapSelector(selectors, 3)
 	if err != nil {
 		return
 	}
@@ -61,4 +62,21 @@ func Test_SelectorSpecFromMulPath(t *testing.T) {
 	var s strings.Builder
 	dagjson.Encode(sel, &s)
 	fmt.Printf("%v\n", s.String())
+}
+
+func Test_DivideExploreAllRecursiveSelector(t *testing.T) {
+	selectors := selectorparse.CommonSelector_ExploreAllRecursively
+	splitSelector, err := DivideExploreAllRecursiveSelector(selectors, 3, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, sel := range splitSelector {
+		var s strings.Builder
+		err := dagjson.Encode(sel, &s)
+		if err != nil {
+			fmt.Printf("Encode%v\n", err)
+		}
+		fmt.Printf("the %v node ,%s\n", i+1, s.String())
+		//fmt.Printf("%v \n", s.String() == selecter1 || s.String() == selecter2 || s.String() == selecter3)
+	}
 }
