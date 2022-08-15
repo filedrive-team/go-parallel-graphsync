@@ -66,6 +66,12 @@ num=3 will be divided into
 	-selecter3 `{"R":{":>":{"f":{"f>":{"Links":{"|":[{"r":{"$":11,">":{"|":[{".":{}},{"a":{">":{"@":{}}}}]},"^":7}},{"i":{">":{"|":[{".":{}},{"a":{">":{"@":{}}}}]},"i":0}}]}}}},"l":{"none":{}}}}`
 */
 func DivideMapSelector(selectors ipld.Node, num int64, linkNums int64) ([]ipld.Node, error) {
+	if num <= 0 {
+		return nil, fmt.Errorf("invalid number of selectors divide: %d", num)
+	}
+	if num == 1 {
+		return []ipld.Node{selectors}, nil
+	}
 	sels := make([]ipld.Node, 0, num)
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
 	//{"R":{":>":{"f":{"f>":{"Links":{"r":{"$":11,">":{"|":[{"a":{">":{"@":{}}}}]},"^":1}}}}},"l":{"none":{}}}}

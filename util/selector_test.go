@@ -24,7 +24,7 @@ func TestSplitMapSelector(t *testing.T) {
 			specBuilder.Insert("Links", ssb.ExploreRange(1, 11,
 				ssb.ExploreUnion(ssb.ExploreAll(ssb.ExploreRecursiveEdge()))))
 		})).Node()
-	splitSelector, err := DivideMapSelector(selectors, 3)
+	splitSelector, err := DivideMapSelector(selectors, 3, 10)
 	if err != nil {
 		return
 	}
@@ -66,7 +66,7 @@ func Test_SelectorSpecFromMulPath(t *testing.T) {
 
 func Test_DivideExploreAllRecursiveSelector(t *testing.T) {
 	selectors := selectorparse.CommonSelector_ExploreAllRecursively
-	splitSelector, err := DivideExploreAllRecursiveSelector(selectors, 3, 10)
+	splitSelector, err := DivideMapSelector(selectors, 3, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
