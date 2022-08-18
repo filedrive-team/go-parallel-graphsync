@@ -31,7 +31,7 @@ func TestGraphSync2(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 	const ServicesNum = 3
-	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum)
+	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum, true)
 	if err != nil {
 		t.Fatal(err)
 	}

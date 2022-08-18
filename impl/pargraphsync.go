@@ -335,15 +335,18 @@ func (gs *ParallelGraphSync) RequestMany(ctx context.Context, reqParams []pargra
 		go func(param pargraphsync.RequestParam) {
 			defer wg.Done()
 			resp, errs := gs.Request(ctx, param.PeerId, param.Root, param.Selector, param.Extensions...)
+			var wgResp sync.WaitGroup
+			wgResp.Add(1)
 			go func() {
+				defer wgResp.Done()
 				for r := range resp {
 					returnedResponses <- r
 				}
 			}()
-
 			for e := range errs {
 				returnedErrors <- e
 			}
+			wgResp.Wait()
 		}(param)
 	}
 	go func() {
