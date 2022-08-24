@@ -263,3 +263,125 @@ func SelectorSpecFromMulPath(path Expression, matchPath bool, optionalSubselecto
 
 	return ss, nil
 }
+
+type trieNode struct {
+	segment  string
+	isEnding bool
+	children map[string]*trieNode
+}
+
+func NewTrieNode(segment string) *trieNode {
+	return &trieNode{
+		segment:  segment,
+		isEnding: false,
+		children: make(map[string]*trieNode),
+	}
+}
+
+type Trie struct {
+	root *trieNode
+}
+
+func NewTrie() *Trie {
+	tn := NewTrieNode("!")
+	return &Trie{tn}
+}
+
+func (t *Trie) Insert(nodes []string) {
+	node := t.root
+	for _, code := range nodes {
+		value, ok := node.children[node.segment+"/"+code]
+		if !ok {
+			value = NewTrieNode(code)
+			node.children[node.segment+"/"+code] = value
+		}
+		value.segment = code
+
+		node = value
+	}
+	node.isEnding = true
+}
+func PathsToTrie(paths []string) *Trie {
+	trie := NewTrie()
+	var links [][]string
+	for _, path := range paths {
+		links = append(links, strings.Split(path, "/"))
+	}
+	//fmt.Printf("%v\n", links)
+	for _, word := range links {
+		trie.Insert(word)
+	}
+	return trie
+}
+
+func WalkUnionSelector(paths []string) (ipld.Node, error) {
+	if len(paths) < 1 {
+		return nil, fmt.Errorf("paths should not be nil")
+	}
+	if len(paths) == 1 {
+		selectorSpec, err := textselector.SelectorSpecFromPath(textselector.Expression(paths[0]), false, nil)
+		return selectorSpec.Node(), err
+	}
+	trieTree := PathsToTrie(paths)
+	//fmt.Printf("%v", trieTree)
+	sel := UnionSelectorsFromTrieNode(trieTree.root)
+	//var s strings.Builder
+	//err := dagjson.Encode(a.Node(), &s)
+	//if err != nil {
+	//	fmt.Printf("eerr:%v\n", err)
+	//	return nil, err
+	//}
+	//fmt.Printf("result %v\n", s.String())
+	return sel.Node(), nil
+}
+func UnionSelectorsFromTrieNode(t *trieNode) builder.SelectorSpec {
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+
+	if t == nil {
+		return nil
+	}
+	if len(t.children) == 0 {
+		selectorSpec, err := textselector.SelectorSpecFromPath(textselector.Expression(t.segment), false, nil)
+		if err != nil {
+			return nil
+		}
+		return selectorSpec
+	} else if len(t.children) > 1 {
+		var specs []builder.SelectorSpec
+		for _, v := range t.children {
+			specs = append(specs, UnionSelectorsFromTrieNode(v))
+		}
+		selectorSpec := ssb.ExploreUnion(specs...)
+		if t.segment != "!" {
+			return ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+				specBuilder.Insert(t.segment, selectorSpec)
+			})
+		} else {
+			return selectorSpec
+		}
+
+	} else {
+		for _, v := range t.children {
+			if t.segment != "!" {
+				return ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+					specBuilder.Insert(t.segment, UnionSelectorsFromTrieNode(v))
+				})
+			} else {
+				return UnionSelectorsFromTrieNode(v)
+			}
+		}
+
+	}
+	return nil
+}
+func Walks(t *trieNode) {
+	if t == nil {
+		return
+	}
+	for k, v := range t.children {
+		fmt.Printf(`"%v"`, k)
+		fmt.Println()
+		Walks(v)
+	}
+	return
+}

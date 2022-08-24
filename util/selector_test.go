@@ -80,3 +80,81 @@ func Test_DivideExploreAllRecursiveSelector(t *testing.T) {
 		//fmt.Printf("%v \n", s.String() == selecter1 || s.String() == selecter2 || s.String() == selecter3)
 	}
 }
+
+func TestUnionSelector(t *testing.T) {
+	testCases := []struct {
+		name   string
+		paths  []string
+		result string
+		expect bool
+	}{
+		{
+			name:   "nil",
+			paths:  []string{},
+			result: `        `,
+			expect: false,
+		},
+		{
+			name:   "none",
+			paths:  []string{""},
+			result: `{".":{}}`,
+			expect: true,
+		},
+		{
+			name: "4 depth same",
+			paths: []string{
+				"Links/0/Hash/Links/0/Hash",
+				"Links/0/Hash/Links/1/Hash",
+				"Links/0/Hash/Links/2/Hash",
+			},
+			result: `{"f":{"f>":{"Links":{"f":{"f>":{"0":{"f":{"f>":{"Hash":{"f":{"f>":{"Links":{"|":[{"f":{"f>":{"0":{"f":{"f>":{"Hash":{".":{}}}}}}}},{"f":{"f>":{"1":{"f":{"f>":{"Hash":{".":{}}}}}}}},{"f":{"f>":{"2":{"f":{"f>":{"Hash":{".":{}}}}}}}}]}}}}}}}}}}}}}`,
+			expect: true,
+		},
+		{
+			name: "1 depth same",
+			paths: []string{
+				"Links/0/Hash/Links/0/Hash",
+				"Links/0/Hash/Links/1/Hash",
+				"Links/1/Hash/Links/2/Hash",
+			},
+			result: `{"f":{"f>":{"Links":{"|":[{"f":{"f>":{"0":{"f":{"f>":{"Hash":{"f":{"f>":{"Links":{"|":[{"f":{"f>":{"0":{"f":{"f>":{"Hash":{".":{}}}}}}}},{"f":{"f>":{"1":{"f":{"f>":{"Hash":{".":{}}}}}}}}]}}}}}}}}}},{"f":{"f>":{"1":{"f":{"f>":{"Hash":{"f":{"f>":{"Links":{"f":{"f>":{"2":{"f":{"f>":{"Hash":{".":{}}}}}}}}}}}}}}}}}]}}}}`,
+			expect: true,
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			res, err := WalkUnionSelector(testCase.paths)
+			if (err == nil) != testCase.expect {
+				t.Fatal(err)
+			}
+			var s strings.Builder
+			if res != nil {
+				err = dagjson.Encode(res, &s)
+				if (err == nil) != testCase.expect {
+					t.Error(err)
+					return
+				}
+			}
+			if (s.String() == testCase.result) != testCase.expect {
+				t.Errorf("not equal,`%v`\n`%v`\n", testCase.result, s.String())
+			}
+		})
+	}
+}
+func TestTrie_Walk(t *testing.T) {
+	trie := NewTrie()
+	var paths = []string{
+		"Links/0/Hash/Links/0/Hash",
+		"Links/1/Hash/Links/1/Hash",
+		"Links/0/Hash/Links/2/Hash",
+	}
+	var links [][]string
+	for _, path := range paths {
+		links = append(links, strings.Split(path, "/"))
+	}
+	for _, word := range links {
+		trie.Insert(word)
+	}
+	f, _ := WalkUnionSelector(paths)
+	fmt.Printf("%+v\n", f)
+}
