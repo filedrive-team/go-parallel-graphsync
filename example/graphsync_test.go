@@ -4,11 +4,12 @@ import (
 	"context"
 	crand "crypto/rand"
 	"fmt"
+	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
 	"github.com/ipfs/go-blockservice"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-cidutil"
 	"github.com/ipfs/go-datastore"
-	"github.com/ipfs/go-datastore/sync"
+	dssync "github.com/ipfs/go-datastore/sync"
 	"github.com/ipfs/go-graphsync"
 	graphsyncImpl "github.com/ipfs/go-graphsync/impl"
 	gsnet "github.com/ipfs/go-graphsync/network"
@@ -46,30 +47,32 @@ import (
 //		t.Fatal(err)
 //	}
 //}
+var hs host.Host
+var gs pargraphsync.ParallelGraphExchange
+var peerIds []peer.ID
+var root cid.Cid
 
-func TestGraphSync(t *testing.T) {
+const ServicesNum = 3
+
+func TestMain(m *testing.M) {
+	t := &testing.T{}
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
-	err := startSomeGraphSyncServices(t, mainCtx, 1, true, "car-v2.car")
+
+	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum, false, "car-v2.car")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	keyFile := path.Join(os.TempDir(), "gs-key")
 	ds := datastore.NewMapDatastore()
-	bs := blockstore.NewBlockstore(sync.MutexWrap(ds))
-	//dsPath := path.Join(os.TempDir(), "gs-ds")
-	//ds, err := levelds.NewDatastore(dsPath, nil)
-	//if err != nil {
-	//	t.Fatal(err)
-	//}
-	//bs := blockstore.NewBlockstore(ds)
+	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
 
-	host, gs, err := startGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9320", keyFile, bs)
+	hs, gs, err = startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9220", keyFile, bs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Printf("requester peerId=%s\n", host.ID())
+	fmt.Printf("requester peerId=%s\n", hs.ID())
 
 	gs.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
 		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
@@ -100,12 +103,12 @@ func TestGraphSync(t *testing.T) {
 	gs.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
 		fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
 	})
-	// uninitialized, is it a bug?
+	//uninitialized, is it a bug?
 	//gs.RegisterOutgoingRequestProcessingListener(func(p peer.ID, request graphsync.RequestData, inProgressRequestCount int) {
 	//	fmt.Printf("request requestId=%s\n", request.ID().String())
 	//})
 	memds := datastore.NewMapDatastore()
-	membs := blockstore.NewBlockstore(sync.MutexWrap(memds))
+	membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
 	newlsys := storeutil.LinkSystemForBlockstore(membs)
 	gs.RegisterPersistenceOption("newLinkSys", newlsys)
 
@@ -118,43 +121,25 @@ func TestGraphSync(t *testing.T) {
 	gs.RegisterRequestUpdatedHook(func(p peer.ID, request graphsync.RequestData, updateRequest graphsync.RequestData, hookActions graphsync.RequestUpdatedHookActions) {
 		fmt.Printf("RegisterRequestUpdatedHook request requestId=%s\n", request.ID().String())
 	})
-
-	var responseProgress <-chan graphsync.ResponseProgress
-	var errors <-chan error
-
 	// QmTTSVQrNxBvQDXevh3UvToezMw1XQ5hvTMCwpDc8SDnNT
 	// Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y
-	root, _ := cid.Parse("Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y")
-
-	servKeyFile := path.Join(os.TempDir(), "gs-key0")
-	privKey, err := loadOrInitPeerKey(servKeyFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	peerId, err := peer.IDFromPrivateKey(privKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr, err := multiaddr.NewMultiaddr("/ip4/127.0.0.1/tcp/9310")
-	if err != nil {
-		t.Fatal(err)
-	}
-	host.Peerstore().AddAddr(peerId, addr, peerstore.PermanentAddrTTL)
-	// create a selector to traverse the whole tree
-	allSelector := selectorparse.CommonSelector_ExploreAllRecursively
-
-	responseProgress, errors = gs.Request(context.TODO(), peerId, cidlink.Link{root}, allSelector)
-	go func() {
-		select {
-		case err := <-errors:
-			if err != nil {
-				t.Fatal(err)
-			}
+	root, _ = cid.Parse("Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y")
+	for i := 0; i < ServicesNum; i++ {
+		servKeyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key931%d", i))
+		privKey, err := loadOrInitPeerKey(servKeyFile)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}()
-
-	for blk := range responseProgress {
-		fmt.Printf("path=%s \n", blk.Path.String())
+		peerId, err := peer.IDFromPrivateKey(privKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		addr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/127.0.0.1/tcp/931%d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		hs.Peerstore().AddAddr(peerId, addr, peerstore.PermanentAddrTTL)
+		peerIds = append(peerIds, peerId)
 	}
 	// restore to a file
 	if false {
@@ -172,6 +157,29 @@ func TestGraphSync(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	os.Exit(m.Run())
+}
+func TestGraphSync(t *testing.T) {
+	var responseProgress <-chan graphsync.ResponseProgress
+	var errors <-chan error
+
+	// create a selector to traverse the whole tree
+	allSelector := selectorparse.CommonSelector_ExploreAllRecursively
+
+	responseProgress, errors = gs.Request(context.TODO(), peerIds[0], cidlink.Link{root}, allSelector)
+	go func() {
+		select {
+		case err := <-errors:
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}()
+
+	for blk := range responseProgress {
+		fmt.Printf("path=%s \n", blk.Path.String())
+	}
+
 }
 
 func loadOrInitPeerKey(kf string) (crypto.PrivKey, error) {
@@ -370,14 +378,14 @@ func startSomeGraphSyncServices(t *testing.T, ctx context.Context, number int, p
 	if err != nil {
 		return err
 	}
-	return startSomeGraphSyncServicesByBlockStore(t, ctx, number, bs, printLog)
+	return startSomeGraphSyncServicesByBlockStore(t, ctx, number, "931", bs, printLog)
 }
 
-func startSomeGraphSyncServicesByBlockStore(t *testing.T, ctx context.Context, number int, bs blockstore.Blockstore, printLog bool) error {
+func startSomeGraphSyncServicesByBlockStore(t *testing.T, ctx context.Context, number int, port string, bs blockstore.Blockstore, printLog bool) error {
 	for i := 0; i < number; i++ {
 		go func(i int) {
-			keyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key%d", i))
-			_, err := startGraphSyncService(ctx, fmt.Sprintf("/ip4/0.0.0.0/tcp/931%d", i), keyFile, bs, printLog)
+			keyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key%s%d", port, i))
+			_, err := startGraphSyncService(ctx, fmt.Sprintf("/ip4/0.0.0.0/tcp/%s%d", port, i), keyFile, bs, printLog)
 			if err != nil {
 				t.Fatal(err)
 			}
