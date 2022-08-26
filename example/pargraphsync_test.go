@@ -50,7 +50,7 @@ func TestParallelGraphSync(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 	const ServicesNum = 3
-	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum, true)
+	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum, true, "big-v2.car")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestGraphSyncSelectorFromMulPath(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 	const ServicesNum = 3
-	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum, true)
+	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum, true, "big-v2.car")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +445,7 @@ func TestParallelGraphSyncDivideSelector(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 	const ServicesNum = 3
-	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum, true)
+	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum, true, "big-v2.car")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -573,7 +573,7 @@ func TestParallelGraphSyncWithoutRange(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 	const ServicesNum = 3
-	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum, true)
+	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum, true, "big-v2.car")
 	if err != nil {
 		t.Fatal(err)
 	}
