@@ -290,10 +290,10 @@ func NewTrie() *Trie {
 func (t *Trie) Insert(nodes []string) {
 	node := t.root
 	for _, code := range nodes {
-		value, ok := node.children[node.segment+"/"+code]
+		value, ok := node.children[code]
 		if !ok {
 			value = NewTrieNode(code)
-			node.children[node.segment+"/"+code] = value
+			node.children[code] = value
 		}
 		value.segment = code
 

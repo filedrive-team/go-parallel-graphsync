@@ -50,7 +50,7 @@ import (
 func TestGraphSync(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
-	err := startSomeGraphSyncServices(t, mainCtx, 1, true)
+	err := startSomeGraphSyncServices(t, mainCtx, 1, true, "car-v2.car")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,6 @@ func TestGraphSync(t *testing.T) {
 	for blk := range responseProgress {
 		fmt.Printf("path=%s \n", blk.Path.String())
 	}
-
 	// restore to a file
 	if false {
 		rdag := merkledag.NewDAGService(blockservice.New(bs, offline.Exchange(bs)))
@@ -242,7 +241,6 @@ func loadCarV2Blockstore(path string) (*carv2bs.ReadOnly, error) {
 	if err != nil {
 		return nil, xerrors.Errorf("failed to create carv2 read retrieval: %w", err)
 	}
-
 	return bs, nil
 }
 
@@ -268,7 +266,6 @@ func startGraphSyncService(ctx context.Context, listenAddr string, keyFile strin
 	if err != nil {
 		return nil, err
 	}
-
 	if printLog {
 		fmt.Printf("host multiAddrs: %v\n", host.Addrs())
 	}
@@ -368,8 +365,8 @@ func startGraphSyncClient(ctx context.Context, listenAddr string, keyFile string
 	return host, exchange, nil
 }
 
-func startSomeGraphSyncServices(t *testing.T, ctx context.Context, number int, printLog bool) error {
-	bs, err := loadCarV2Blockstore("./car-v2.car")
+func startSomeGraphSyncServices(t *testing.T, ctx context.Context, number int, printLog bool, path string) error {
+	bs, err := loadCarV2Blockstore(path)
 	if err != nil {
 		return err
 	}
