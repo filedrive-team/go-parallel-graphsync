@@ -38,7 +38,6 @@ import (
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/peerstore"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
-	"github.com/multiformats/go-multiaddr"
 	"math/rand"
 	"os"
 	"path"
@@ -50,6 +49,14 @@ import (
 func TestParallelGraphSync(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
+
+	globalParExchange.UnregisterPersistenceOption("newLinkSys")
+	memds := datastore.NewMapDatastore()
+	membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
+	newlsys := storeutil.LinkSystemForBlockstore(membs)
+	if err := globalParExchange.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+		t.Fatal(err)
+	}
 
 	sel1, err := GenerateSubRangeSelector("Links/0/Hash", 0, 3)
 	if err != nil {
@@ -73,14 +80,14 @@ func TestParallelGraphSync(t *testing.T) {
 	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
 	for i := 0; i < len(sels); i++ {
 		params = append(params, pargraphsync.RequestParam{
-			PeerId:   peerIds[i],
-			Root:     cidlink.Link{root},
+			PeerId:   globalAddrInfos[i].ID,
+			Root:     cidlink.Link{globalRoot},
 			Selector: sels[i],
 		})
 	}
 
 	reqFunc := func(params []pargraphsync.RequestParam) {
-		responseProgress, errors := gs.RequestMany(mainCtx, params)
+		responseProgress, errors := globalParExchange.RequestMany(mainCtx, params)
 		go func() {
 			select {
 			case err := <-errors:
@@ -103,8 +110,8 @@ func TestParallelGraphSync(t *testing.T) {
 
 	// restore to a file
 	if false {
-		rdag := merkledag.NewDAGService(blockservice.New(bs, offline.Exchange(bs)))
-		nd, err := rdag.Get(mainCtx, root)
+		rdag := merkledag.NewDAGService(blockservice.New(globalBs, offline.Exchange(globalBs)))
+		nd, err := rdag.Get(mainCtx, globalRoot)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -122,6 +129,15 @@ func TestParallelGraphSync(t *testing.T) {
 func TestGraphSyncSelectorFromMulPath(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
+
+	globalParExchange.UnregisterPersistenceOption("newLinkSys")
+	memds := datastore.NewMapDatastore()
+	membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
+	newlsys := storeutil.LinkSystemForBlockstore(membs)
+	if err := globalParExchange.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+		t.Fatal(err)
+	}
+
 	sels := make([]datamodel.Node, 0)
 	selector1, err := util.SelectorSpecFromMulPath("Links/0/Hash/Links/2-4", true, nil)
 	if err != nil {
@@ -142,13 +158,13 @@ func TestGraphSyncSelectorFromMulPath(t *testing.T) {
 	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
 	for i := 0; i < ServicesNum; i++ {
 		params = append(params, pargraphsync.RequestParam{
-			PeerId:   peerIds[i],
-			Root:     cidlink.Link{root},
+			PeerId:   globalAddrInfos[i].ID,
+			Root:     cidlink.Link{globalRoot},
 			Selector: sels[i],
 		})
 	}
 
-	responseProgress, errors := gs.RequestMany(mainCtx, params)
+	responseProgress, errors := globalParExchange.RequestMany(mainCtx, params)
 	go func() {
 		select {
 		case err := <-errors:
@@ -169,7 +185,7 @@ func BenchmarkGraphSync(b *testing.B) {
 	defer cancel()
 	const ServicesNum = 3
 	servbs, rootCid := CreateRandomBytesBlockStore(mainCtx, 290*1024*1024)
-	err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9910, servbs, false)
+	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9110, servbs, false)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -177,7 +193,7 @@ func BenchmarkGraphSync(b *testing.B) {
 	ds := datastore.NewMapDatastore()
 	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
 
-	host, gscli, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9920", keyFile, bs)
+	host, gscli, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9120", keyFile, bs)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -206,23 +222,10 @@ func BenchmarkGraphSync(b *testing.B) {
 	}
 	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
 	for i := 0; i < ServicesNum; i++ {
-		servKeyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key%d", 9910+i))
-		privKey, err := loadOrInitPeerKey(servKeyFile)
-		if err != nil {
-			b.Fatal(err)
-		}
-		peerId, err := peer.IDFromPrivateKey(privKey)
-		if err != nil {
-			b.Fatal(err)
-		}
-		addr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/127.0.0.1/tcp/%d", 9910+i))
-		if err != nil {
-			b.Fatal(err)
-		}
-		host.Peerstore().AddAddr(peerId, addr, peerstore.PermanentAddrTTL)
+		host.Peerstore().AddAddr(addrInfos[i].ID, globalAddrInfos[i].Addrs[0], peerstore.PermanentAddrTTL)
 
 		params = append(params, pargraphsync.RequestParam{
-			PeerId:   peerId,
+			PeerId:   addrInfos[i].ID,
 			Root:     cidlink.Link{rootCid},
 			Selector: sels[i],
 		})
@@ -305,6 +308,15 @@ func BenchmarkGraphSync(b *testing.B) {
 func TestParallelGraphSyncDivideSelector(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
+
+	globalParExchange.UnregisterPersistenceOption("newLinkSys")
+	memds := datastore.NewMapDatastore()
+	membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
+	newlsys := storeutil.LinkSystemForBlockstore(membs)
+	if err := globalParExchange.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+		t.Fatal(err)
+	}
+
 	// create a selector to traverse the whole tree
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
 	sel := ssb.ExploreRecursive(selector.RecursionLimitNone(),
@@ -320,13 +332,13 @@ func TestParallelGraphSyncDivideSelector(t *testing.T) {
 	for i := 0; i < ServicesNum; i++ {
 
 		params = append(params, pargraphsync.RequestParam{
-			PeerId:   peerIds[i],
-			Root:     cidlink.Link{root},
+			PeerId:   globalAddrInfos[i].ID,
+			Root:     cidlink.Link{globalRoot},
 			Selector: sels[i],
 		})
 	}
 
-	responseProgress, errors := gs.RequestMany(mainCtx, params)
+	responseProgress, errors := globalParExchange.RequestMany(mainCtx, params)
 	go func() {
 		select {
 		case err := <-errors:
@@ -345,6 +357,15 @@ func TestParallelGraphSyncDivideSelector(t *testing.T) {
 func TestParallelGraphSyncWithoutRange(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
+
+	globalParExchange.UnregisterPersistenceOption("newLinkSys")
+	memds := datastore.NewMapDatastore()
+	membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
+	newlsys := storeutil.LinkSystemForBlockstore(membs)
+	if err := globalParExchange.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+		t.Fatal(err)
+	}
+
 	//ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
 	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
 
@@ -353,7 +374,7 @@ func TestParallelGraphSyncWithoutRange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	responseProgressRoot, errorsRoot := gs.Request(context.TODO(), peerIds[0], cidlink.Link{root}, sel.Node())
+	responseProgressRoot, errorsRoot := globalParExchange.Request(context.TODO(), globalAddrInfos[0].ID, cidlink.Link{globalRoot}, sel.Node())
 	go func() {
 		select {
 		case err := <-errorsRoot:
@@ -368,7 +389,7 @@ func TestParallelGraphSyncWithoutRange(t *testing.T) {
 		dagpb.Encode(blk.Node, &buf)
 		fmt.Printf("path=%s \n", blk.Path.String())
 		//fmt.Println()
-		if blocks.NewBlock([]byte(buf.String())).Cid() != blocks.NewBlock([]byte("")).Cid() && blocks.NewBlock([]byte(buf.String())).Cid() != root {
+		if blocks.NewBlock([]byte(buf.String())).Cid() != blocks.NewBlock([]byte("")).Cid() && blocks.NewBlock([]byte(buf.String())).Cid() != globalRoot {
 			//fmt.Printf(" aaaa:%v\n", blocks.NewBlock([]byte(buf.String())))
 			protobuf, err := merkledag.DecodeProtobuf([]byte(buf.String()))
 			if err != nil {
@@ -387,12 +408,12 @@ func TestParallelGraphSyncWithoutRange(t *testing.T) {
 	}
 	for i := 0; i < ServicesNum; i++ {
 		params = append(params, pargraphsync.RequestParam{
-			PeerId:   peerIds[i],
-			Root:     cidlink.Link{root},
+			PeerId:   globalAddrInfos[i].ID,
+			Root:     cidlink.Link{globalRoot},
 			Selector: sels[i],
 		})
 	}
-	responseProgress, errors := gs.RequestMany(mainCtx, params)
+	responseProgress, errors := globalParExchange.RequestMany(mainCtx, params)
 	go func() {
 		select {
 		case err := <-errors:
@@ -413,7 +434,7 @@ func TestGraphSyncDAG2(t *testing.T) {
 	defer cancel()
 	const ServicesNum = 3
 	servbs, root := CreateTestBlockstore(mainCtx)
-	err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9800, servbs, true)
+	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9210, servbs, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -421,7 +442,7 @@ func TestGraphSyncDAG2(t *testing.T) {
 	ds := datastore.NewMapDatastore()
 	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
 
-	host, gs, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9821", keyFile, bs)
+	host, gs, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9220", keyFile, bs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -450,23 +471,10 @@ func TestGraphSyncDAG2(t *testing.T) {
 	}
 	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
 	for i := 0; i < len(sels); i++ {
-		servKeyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key%d", 9800+i))
-		privKey, err := loadOrInitPeerKey(servKeyFile)
-		if err != nil {
-			t.Fatal(err)
-		}
-		peerId, err := peer.IDFromPrivateKey(privKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		addr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/127.0.0.1/tcp/%d", 9800+i))
-		if err != nil {
-			t.Fatal(err)
-		}
-		host.Peerstore().AddAddr(peerId, addr, peerstore.PermanentAddrTTL)
+		host.Peerstore().AddAddr(addrInfos[i].ID, addrInfos[i].Addrs[0], peerstore.PermanentAddrTTL)
 
 		params = append(params, pargraphsync.RequestParam{
-			PeerId:   peerId,
+			PeerId:   addrInfos[i].ID,
 			Root:     cidlink.Link{root},
 			Selector: sels[i],
 		})

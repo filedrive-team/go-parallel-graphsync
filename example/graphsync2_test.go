@@ -5,7 +5,11 @@ import (
 	"fmt"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/ipfs/go-cid"
+	"github.com/ipfs/go-datastore"
+	dssync "github.com/ipfs/go-datastore/sync"
 	"github.com/ipfs/go-graphsync"
+	"github.com/ipfs/go-graphsync/storeutil"
+	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	"github.com/ipld/go-ipld-prime"
 	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	"github.com/ipld/go-ipld-prime/datamodel"
@@ -15,7 +19,6 @@ import (
 	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/peerstore"
-	"github.com/multiformats/go-multiaddr"
 	"os"
 	"path"
 	"strings"
@@ -25,6 +28,14 @@ import (
 
 func TestGraphSync2(t *testing.T) {
 	var errors <-chan error
+
+	globalParExchange.UnregisterPersistenceOption("newLinkSys")
+	memds := datastore.NewMapDatastore()
+	membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
+	newlsys := storeutil.LinkSystemForBlockstore(membs)
+	if err := globalParExchange.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+		t.Fatal(err)
+	}
 
 	// create a selector to traverse the whole tree
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
@@ -55,7 +66,7 @@ func TestGraphSync2(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := 0; i < ServicesNum; i++ {
-		_, errors = gs.Request(context.TODO(), peerIds[i], cidlink.Link{root}, sels[i])
+		_, errors = globalParExchange.Request(context.TODO(), globalAddrInfos[i].ID, cidlink.Link{globalRoot}, sels[i])
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -77,7 +88,10 @@ func TestUnionSelector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	startSomeGraphSyncServicesByBlockStore(mainCtx, 1, 9810, bs, false)
+	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, 1, 9810, bs, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	keyFile := path.Join(os.TempDir(), "gs-key9710")
 	rootCid, _ := cid.Parse("QmSvtt6abwrp3MybYqHHA4BdFjjuLBABXjLEVQKpMUfUU8")
 	host, pgs, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9710", keyFile, bs)
@@ -90,20 +104,7 @@ func TestUnionSelector(t *testing.T) {
 		//hookActions.UsePersistenceOption("newLinkSys")
 	})
 
-	servKeyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key9810"))
-	privKey, err := loadOrInitPeerKey(servKeyFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	peerId, err := peer.IDFromPrivateKey(privKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/127.0.0.1/tcp/9810"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	host.Peerstore().AddAddr(peerId, addr, peerstore.PermanentAddrTTL)
+	host.Peerstore().AddAddr(addrInfos[0].ID, addrInfos[0].Addrs[0], peerstore.PermanentAddrTTL)
 
 	testCases := []struct {
 		name   string
@@ -196,7 +197,7 @@ func TestUnionSelector(t *testing.T) {
 					return
 				}
 			}
-			result := comparePaths(t, pgs, res, testCase.paths, peerId, cidlink.Link{Cid: rootCid})
+			result := comparePaths(t, pgs, res, testCase.paths, addrInfos[0].ID, cidlink.Link{Cid: rootCid})
 			if result != testCase.expect {
 				t.Errorf("not equal,\n%v\n", s.String())
 			}
