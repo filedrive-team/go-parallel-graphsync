@@ -327,11 +327,11 @@ func (gs *ParallelGraphSync) Request(ctx context.Context, p peer.ID, root ipld.L
 
 // RequestMany initiates some new GraphSync requests to the given peers of param group using the given selector spec.
 func (gs *ParallelGraphSync) RequestMany(ctx context.Context, reqParams []pargraphsync.RequestParam) (<-chan graphsync.ResponseProgress, <-chan error) {
-	idFromContext := ctx.Value(graphsync.RequestIDContextKey{})
-	if _, ok := idFromContext.(graphsync.RequestID); !ok {
-		requestID := graphsync.NewRequestID()
-		ctx = context.WithValue(ctx, graphsync.RequestIDContextKey{}, requestID)
-	}
+	//idFromContext := ctx.Value(graphsync.RequestIDContextKey{})
+	//if _, ok := idFromContext.(graphsync.RequestID); !ok {
+	//	requestID := graphsync.NewRequestID()
+	//	ctx = context.WithValue(ctx, graphsync.RequestIDContextKey{}, requestID)
+	//}
 	var wg sync.WaitGroup
 	returnedResponses := make(chan graphsync.ResponseProgress)
 	returnedErrors := make(chan error)

@@ -21,6 +21,8 @@ import (
 	files "github.com/ipfs/go-ipfs-files"
 	ipldformat "github.com/ipfs/go-ipld-format"
 	"github.com/ipfs/go-merkledag"
+	"github.com/ipfs/go-unixfs"
+	unixfile "github.com/ipfs/go-unixfs/file"
 	"github.com/ipfs/go-unixfs/importer/balanced"
 	ihelper "github.com/ipfs/go-unixfs/importer/helpers"
 	dagpb "github.com/ipld/go-codec-dagpb"
@@ -49,14 +51,27 @@ func TestParallelGraphSync(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 
+	sel1, err := GenerateSubRangeSelector("Links/0/Hash", 0, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel2, err := GenerateSubRangeSelector("Links/0/Hash", 3, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel3, err := GenerateSubRangeSelector("Links/0/Hash", 7, 11)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	sels := []datamodel.Node{
-		GenerateSelecter(0, 3),
-		GenerateSelecter(3, 7),
-		GenerateSelecter(7, 11),
+		sel1,
+		sel2,
+		sel3,
 	}
 
 	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
-	for i := 0; i < ServicesNum; i++ {
+	for i := 0; i < len(sels); i++ {
 		params = append(params, pargraphsync.RequestParam{
 			PeerId:   peerIds[i],
 			Root:     cidlink.Link{root},
@@ -64,20 +79,44 @@ func TestParallelGraphSync(t *testing.T) {
 		})
 	}
 
-	responseProgress, errors := gs.RequestMany(mainCtx, params)
-	go func() {
-		select {
-		case err := <-errors:
-			if err != nil {
-				t.Fatal(err)
+	reqFunc := func(params []pargraphsync.RequestParam) {
+		responseProgress, errors := gs.RequestMany(mainCtx, params)
+		go func() {
+			select {
+			case err := <-errors:
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+		}()
+
+		for blk := range responseProgress {
+			fmt.Printf("path=%s \n", blk.Path.String())
+			if nd, err := blk.Node.LookupByString("Links"); err == nil {
+				fmt.Printf("links=%d\n", nd.Length())
 			}
 		}
-	}()
-
-	for blk := range responseProgress {
-		fmt.Printf("path=%s \n", blk.Path.String())
 	}
 
+	reqFunc(params[:1])
+	reqFunc(params[1:])
+
+	// restore to a file
+	if false {
+		rdag := merkledag.NewDAGService(blockservice.New(bs, offline.Exchange(bs)))
+		nd, err := rdag.Get(mainCtx, root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file, err := unixfile.NewUnixfsFile(mainCtx, rdag, nd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = NodeWriteTo(file, "./src")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func TestGraphSyncSelectorFromMulPath(t *testing.T) {
@@ -130,32 +169,44 @@ func BenchmarkGraphSync(b *testing.B) {
 	defer cancel()
 	const ServicesNum = 3
 	servbs, rootCid := CreateRandomBytesBlockStore(mainCtx, 290*1024*1024)
-	err := startSomeGraphSyncServicesByBlockStore(&testing.T{}, mainCtx, ServicesNum, "991", servbs, false)
+	err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9910, servbs, false)
 	if err != nil {
 		b.Fatal(err)
 	}
-	keyFile := path.Join(os.TempDir(), "gs-key")
+	keyFile := path.Join(os.TempDir(), "gscli-key")
 	ds := datastore.NewMapDatastore()
 	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
 
-	host, gs, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9320", keyFile, bs)
+	host, gscli, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9920", keyFile, bs)
 	if err != nil {
 		b.Fatal(err)
 	}
 
-	gs.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
+	gscli.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
 		//	fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
 		hookActions.UsePersistenceOption("newLinkSys")
 	})
 
+	sel1, err := GenerateSubRangeSelector("", 0, 100)
+	if err != nil {
+		b.Fatal(err)
+	}
+	sel2, err := GenerateSubRangeSelector("", 100, 200)
+	if err != nil {
+		b.Fatal(err)
+	}
+	sel3, err := GenerateSubRangeSelector("", 200, 300)
+	if err != nil {
+		b.Fatal(err)
+	}
 	sels := []datamodel.Node{
-		GenerateSelecter(0, 100),
-		GenerateSelecter(100, 200),
-		GenerateSelecter(200, 300),
+		sel1,
+		sel2,
+		sel3,
 	}
 	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
 	for i := 0; i < ServicesNum; i++ {
-		servKeyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key%d", i))
+		servKeyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key%d", 9910+i))
 		privKey, err := loadOrInitPeerKey(servKeyFile)
 		if err != nil {
 			b.Fatal(err)
@@ -164,7 +215,7 @@ func BenchmarkGraphSync(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		addr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/127.0.0.1/tcp/991%d", i))
+		addr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/127.0.0.1/tcp/%d", 9910+i))
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -180,17 +231,17 @@ func BenchmarkGraphSync(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			b.StopTimer()
-			gs.UnregisterPersistenceOption("newLinkSys")
+			gscli.UnregisterPersistenceOption("newLinkSys")
 			memds := datastore.NewMapDatastore()
 			membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
 			newlsys := storeutil.LinkSystemForBlockstore(membs)
-			if err := gs.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+			if err := gscli.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
 				b.Fatal(err)
 			}
 			b.StartTimer()
 
 			ctx := context.Background()
-			responseProgress, errors := gs.RequestMany(ctx, params)
+			responseProgress, errors := gscli.RequestMany(ctx, params)
 			go func() {
 				select {
 				case err := <-errors:
@@ -207,17 +258,21 @@ func BenchmarkGraphSync(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			b.StopTimer()
-			gs.UnregisterPersistenceOption("newLinkSys")
+			gscli.UnregisterPersistenceOption("newLinkSys")
 			memds := datastore.NewMapDatastore()
 			membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
 			newlsys := storeutil.LinkSystemForBlockstore(membs)
-			if err := gs.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+			if err := gscli.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
 				b.Fatal(err)
 			}
 			b.StartTimer()
 
 			ctx := context.Background()
-			responseProgress, errors := gs.Request(ctx, params[0].PeerId, params[0].Root, GenerateSelecter(0, 300))
+			sel, err := GenerateSubRangeSelector("", 0, 300)
+			if err != nil {
+				b.Fatal(err)
+			}
+			responseProgress, errors := gscli.Request(ctx, params[0].PeerId, params[0].Root, sel)
 			go func() {
 				select {
 				case err := <-errors:
@@ -352,6 +407,107 @@ func TestParallelGraphSyncWithoutRange(t *testing.T) {
 	}
 }
 
+func TestGraphSyncDAG2(t *testing.T) {
+	//b.SetParallelism(10)
+	mainCtx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
+	const ServicesNum = 3
+	servbs, root := CreateTestBlockstore(mainCtx)
+	err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9800, servbs, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyFile := path.Join(os.TempDir(), "gs-prakey")
+	ds := datastore.NewMapDatastore()
+	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
+
+	host, gs, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9821", keyFile, bs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gs.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
+		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
+	})
+
+	selPath := "Links/0/Hash"
+	dal, err := util.GetDataSelector(&selPath, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	subsel := ssb.ExploreRecursive(selector.RecursionLimitNone(),
+		ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+			specBuilder.Insert("Links", ssb.ExploreUnion(
+				//ssb.ExploreRange(start, end, ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
+				ssb.ExploreIndex(0, ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
+			),
+			)
+		}))
+	dal, err = util.GenerateDataSelector(selPath, false, subsel)
+	sels := []datamodel.Node{
+		dal,
+	}
+	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
+	for i := 0; i < len(sels); i++ {
+		servKeyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key%d", 9800+i))
+		privKey, err := loadOrInitPeerKey(servKeyFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		peerId, err := peer.IDFromPrivateKey(privKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		addr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/127.0.0.1/tcp/%d", 9800+i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		host.Peerstore().AddAddr(peerId, addr, peerstore.PermanentAddrTTL)
+
+		params = append(params, pargraphsync.RequestParam{
+			PeerId:   peerId,
+			Root:     cidlink.Link{root},
+			Selector: sels[i],
+		})
+	}
+
+	ctx := context.Background()
+	responseProgress, errors := gs.RequestMany(ctx, params)
+	go func() {
+		select {
+		case err := <-errors:
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}()
+	for blk := range responseProgress {
+		fmt.Printf("path=%s \n", blk.Path.String())
+		if nd, err := blk.Node.LookupByString("Links"); err == nil {
+			fmt.Printf("links=%d\n", nd.Length())
+		}
+
+	}
+
+	// restore to a file
+	if false {
+		rdag := merkledag.NewDAGService(blockservice.New(bs, offline.Exchange(bs)))
+		nd, err := rdag.Get(mainCtx, root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file, err := unixfile.NewUnixfsFile(mainCtx, rdag, nd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = NodeWriteTo(file, "./src")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func startPraGraphSyncClient(ctx context.Context, listenAddr string, keyFile string, bs blockstore.Blockstore) (host.Host, pargraphsync.ParallelGraphExchange, error) {
 	peerkey, err := loadOrInitPeerKey(keyFile)
 	if err != nil {
@@ -416,12 +572,78 @@ func CreateRandomBytesBlockStore(ctx context.Context, dataSize int) (blockstore.
 	return bs, nd.Cid()
 }
 
-func GenerateSelecter(start, end int64) datamodel.Node {
+func GenerateSubRangeSelector(selPath string, start, end int64) (datamodel.Node, error) {
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
-	return ssb.ExploreRecursive(selector.RecursionLimitNone(),
-		ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
-			specBuilder.Insert("Links", ssb.ExploreUnion(ssb.ExploreRange(start, end,
+	subsel := ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+		specBuilder.Insert("Links", ssb.ExploreRange(start, end,
+			ssb.ExploreRecursive(selector.RecursionLimitNone(),
 				ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
-				ssb.ExploreIndex(0, ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())))))
-		})).Node()
+		))
+	})
+	return util.GenerateDataSelector(selPath, false, subsel)
+}
+
+//                                       O
+//                                       |
+//                                       O
+//                                   /   |   \
+//                                 /     |     \
+//                               O       O       O
+//                             / | \   / | \   / | \
+//                            O  O  O O  O  O O  O  O
+func CreateTestBlockstore(ctx context.Context) (blockstore.Blockstore, cid.Cid) {
+	ds := datastore.NewMapDatastore()
+	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
+	dagService := merkledag.NewDAGService(blockservice.New(bs, offline.Exchange(bs)))
+
+	list := make([]*merkledag.ProtoNode, 0, 9)
+	for i := 0; i < 9; i++ {
+		str := fmt.Sprintf("it's node%d ", i)
+		fileNd := merkledag.NodeWithData(unixfs.FilePBData([]byte(str), uint64(len(str))))
+		list = append(list, fileNd)
+	}
+	fileList := make([]*merkledag.ProtoNode, 0, 3)
+	for i := 0; i < 3; i++ {
+		nd := unixfs.EmptyFileNode()
+		links := make([]*ipldformat.Link, 0, 3)
+		for index := i * 3; index < i*3+3; index++ {
+			lk, err := ipldformat.MakeLink(list[index])
+			if err != nil {
+				panic(err)
+			}
+			links = append(links, lk)
+		}
+		nd.SetLinks(links)
+		fileList = append(fileList, nd)
+	}
+	dirNd := unixfs.EmptyDirNode()
+	links := make([]*ipldformat.Link, 0, 3)
+	for i := 0; i < 3; i++ {
+		lk, err := ipldformat.MakeLink(fileList[i])
+		if err != nil {
+			panic(err)
+		}
+		lk.Name = fmt.Sprintf("file%d", i)
+		links = append(links, lk)
+	}
+	dirNd.SetLinks(links)
+
+	rootNd := unixfs.EmptyDirNode()
+	lk, err := ipldformat.MakeLink(dirNd)
+	if err != nil {
+		panic(err)
+	}
+	lk.Name = "dir"
+	rootNd.SetLinks([]*ipldformat.Link{lk})
+
+	nds := make([]ipldformat.Node, 0, 20)
+	for _, nd := range list {
+		nds = append(nds, nd)
+	}
+	for _, nd := range fileList {
+		nds = append(nds, nd)
+	}
+	nds = append(nds, dirNd, rootNd)
+	dagService.AddMany(ctx, nds)
+	return bs, rootNd.Cid()
 }

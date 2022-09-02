@@ -56,6 +56,30 @@ func GetDataSelector(dps *string, matchPath bool) (datamodel.Node, error) {
 	return sel, nil
 }
 
+func GenerateDataSelector(dpsPath string, matchPath bool, optionalSubSel builder.SelectorSpec) (datamodel.Node, error) {
+	sel := selectorparse.CommonSelector_ExploreAllRecursively
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+
+	subselAtTarget := ssb.ExploreRecursive(
+		selector.RecursionLimitNone(),
+		ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())),
+	)
+	if optionalSubSel != nil {
+		subselAtTarget = optionalSubSel
+	}
+	selspec, err := textselector.SelectorSpecFromPath(
+		textselector.Expression(dpsPath), matchPath,
+		subselAtTarget,
+	)
+	if err != nil {
+		return nil, xerrors.Errorf("failed to parse text-selector '%s': %w", dpsPath, err)
+	}
+
+	sel = selspec.Node()
+
+	return sel, nil
+}
+
 /*
 DivideMapSelector divide a  map-range-selectors in to a list of map-range-selectors
 each of which is a list of map-range-selectors

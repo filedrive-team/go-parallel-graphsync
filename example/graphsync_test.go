@@ -5,7 +5,6 @@ import (
 	crand "crypto/rand"
 	"fmt"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
-	"github.com/ipfs/go-blockservice"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-cidutil"
 	"github.com/ipfs/go-datastore"
@@ -15,10 +14,8 @@ import (
 	gsnet "github.com/ipfs/go-graphsync/network"
 	"github.com/ipfs/go-graphsync/storeutil"
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
-	offline "github.com/ipfs/go-ipfs-exchange-offline"
 	files "github.com/ipfs/go-ipfs-files"
 	"github.com/ipfs/go-merkledag"
-	unixfile "github.com/ipfs/go-unixfs/file"
 	carv2bs "github.com/ipld/go-car/v2/blockstore"
 	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
@@ -51,26 +48,26 @@ var hs host.Host
 var gs pargraphsync.ParallelGraphExchange
 var peerIds []peer.ID
 var root cid.Cid
+var bs blockstore.Blockstore
 
 const ServicesNum = 3
 
 func TestMain(m *testing.M) {
-	t := &testing.T{}
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 
-	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum, false, "car-v2.car")
+	err := startSomeGraphSyncServices(mainCtx, ServicesNum, false, "car-v2.car")
 	if err != nil {
-		t.Fatal(err)
+		panic(err)
 	}
 
 	keyFile := path.Join(os.TempDir(), "gs-key")
 	ds := datastore.NewMapDatastore()
-	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
+	bs = blockstore.NewBlockstore(dssync.MutexWrap(ds))
 
 	hs, gs, err = startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9220", keyFile, bs)
 	if err != nil {
-		t.Fatal(err)
+		panic(err)
 	}
 	fmt.Printf("requester peerId=%s\n", hs.ID())
 
@@ -128,37 +125,22 @@ func TestMain(m *testing.M) {
 		servKeyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key931%d", i))
 		privKey, err := loadOrInitPeerKey(servKeyFile)
 		if err != nil {
-			t.Fatal(err)
+			panic(err)
 		}
 		peerId, err := peer.IDFromPrivateKey(privKey)
 		if err != nil {
-			t.Fatal(err)
+			panic(err)
 		}
 		addr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/127.0.0.1/tcp/931%d", i))
 		if err != nil {
-			t.Fatal(err)
+			panic(err)
 		}
 		hs.Peerstore().AddAddr(peerId, addr, peerstore.PermanentAddrTTL)
 		peerIds = append(peerIds, peerId)
 	}
-	// restore to a file
-	if false {
-		rdag := merkledag.NewDAGService(blockservice.New(bs, offline.Exchange(bs)))
-		nd, err := rdag.Get(mainCtx, root)
-		if err != nil {
-			t.Fatal(err)
-		}
-		file, err := unixfile.NewUnixfsFile(mainCtx, rdag, nd)
-		if err != nil {
-			t.Fatal(err)
-		}
-		err = NodeWriteTo(file, "./src2")
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
 	os.Exit(m.Run())
 }
+
 func TestGraphSync(t *testing.T) {
 	var responseProgress <-chan graphsync.ResponseProgress
 	var errors <-chan error
@@ -373,21 +355,21 @@ func startGraphSyncClient(ctx context.Context, listenAddr string, keyFile string
 	return host, exchange, nil
 }
 
-func startSomeGraphSyncServices(t *testing.T, ctx context.Context, number int, printLog bool, path string) error {
+func startSomeGraphSyncServices(ctx context.Context, number int, printLog bool, path string) error {
 	bs, err := loadCarV2Blockstore(path)
 	if err != nil {
 		return err
 	}
-	return startSomeGraphSyncServicesByBlockStore(t, ctx, number, "931", bs, printLog)
+	return startSomeGraphSyncServicesByBlockStore(ctx, number, 9310, bs, printLog)
 }
 
-func startSomeGraphSyncServicesByBlockStore(t *testing.T, ctx context.Context, number int, port string, bs blockstore.Blockstore, printLog bool) error {
+func startSomeGraphSyncServicesByBlockStore(ctx context.Context, number int, portStart int, bs blockstore.Blockstore, printLog bool) error {
 	for i := 0; i < number; i++ {
 		go func(i int) {
-			keyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key%s%d", port, i))
-			_, err := startGraphSyncService(ctx, fmt.Sprintf("/ip4/0.0.0.0/tcp/%s%d", port, i), keyFile, bs, printLog)
+			keyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key%d", portStart+i))
+			_, err := startGraphSyncService(ctx, fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", portStart+i), keyFile, bs, printLog)
 			if err != nil {
-				t.Fatal(err)
+				panic(err)
 			}
 			select {
 			case <-ctx.Done():

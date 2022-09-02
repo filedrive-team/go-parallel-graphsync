@@ -69,6 +69,7 @@ func TestGraphSync2(t *testing.T) {
 	}
 	wg.Wait()
 }
+
 func TestUnionSelector(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
@@ -76,7 +77,7 @@ func TestUnionSelector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	startSomeGraphSyncServicesByBlockStore(t, mainCtx, 1, "981", bs, false)
+	startSomeGraphSyncServicesByBlockStore(mainCtx, 1, 9810, bs, false)
 	keyFile := path.Join(os.TempDir(), "gs-key9710")
 	rootCid, _ := cid.Parse("QmSvtt6abwrp3MybYqHHA4BdFjjuLBABXjLEVQKpMUfUU8")
 	host, pgs, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9710", keyFile, bs)
@@ -203,6 +204,7 @@ func TestUnionSelector(t *testing.T) {
 		})
 	}
 }
+
 func comparePaths(t *testing.T, gs graphsync.GraphExchange, node1 ipld.Node, paths2 []string, id peer.ID, root cidlink.Link) bool {
 	responseProgress, errors := gs.Request(context.TODO(), id, root, node1)
 	go func() {
