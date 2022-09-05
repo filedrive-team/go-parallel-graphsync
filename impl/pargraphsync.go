@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
+	"github.com/filedrive-team/go-parallel-graphsync/groupreq"
 	"github.com/ipfs/go-graphsync"
 	"github.com/ipfs/go-graphsync/allocator"
 	"github.com/ipfs/go-graphsync/listeners"
@@ -73,6 +74,8 @@ type ParallelGraphSync struct {
 	ctx                                context.Context
 	cancel                             context.CancelFunc
 	responseAllocator                  *allocator.Allocator
+
+	groupReqMgr *groupreq.GroupRequestManager
 }
 
 type graphsyncConfigOptions struct {
@@ -299,6 +302,8 @@ func New(parent context.Context, network gsnet.GraphSyncNetwork,
 		ctx:                         ctx,
 		cancel:                      cancel,
 		responseAllocator:           responseAllocator,
+
+		groupReqMgr: groupreq.NewGroupRequestManager(),
 	}
 
 	requestManager.SetDelegate(peerManager)
@@ -322,16 +327,25 @@ func (gs *ParallelGraphSync) Request(ctx context.Context, p peer.ID, root ipld.L
 		attribute.String("root", root.String()),
 		attribute.StringSlice("extensions", extNames),
 	))
+
+	greq := groupreq.NewGroupRequest(ctx)
+	if greq, loaded := gs.groupReqMgr.GetOrAdd(greq); loaded {
+		subReq := groupreq.NewSubRequest(ctx, false)
+		greq.Add(subReq)
+		ctx = subReq.Ctx
+	} else {
+		ctx = greq.GetContext()
+	}
 	return gs.requestManager.NewRequest(ctx, p, root, selector, extensions...)
 }
 
 // RequestMany initiates some new GraphSync requests to the given peers of param group using the given selector spec.
 func (gs *ParallelGraphSync) RequestMany(ctx context.Context, reqParams []pargraphsync.RequestParam) (<-chan graphsync.ResponseProgress, <-chan error) {
-	//idFromContext := ctx.Value(graphsync.RequestIDContextKey{})
-	//if _, ok := idFromContext.(graphsync.RequestID); !ok {
-	//	requestID := graphsync.NewRequestID()
-	//	ctx = context.WithValue(ctx, graphsync.RequestIDContextKey{}, requestID)
-	//}
+	greq := groupreq.NewGroupRequest(ctx)
+	if greq, loaded := gs.groupReqMgr.GetOrAdd(greq); !loaded {
+		ctx = greq.GetContext()
+	}
+
 	var wg sync.WaitGroup
 	returnedResponses := make(chan graphsync.ResponseProgress)
 	returnedErrors := make(chan error)
@@ -344,12 +358,12 @@ func (gs *ParallelGraphSync) RequestMany(ctx context.Context, reqParams []pargra
 			wgResp.Add(1)
 			go func() {
 				defer wgResp.Done()
-				for r := range resp {
-					returnedResponses <- r
+				for e := range errs {
+					returnedErrors <- e
 				}
 			}()
-			for e := range errs {
-				returnedErrors <- e
+			for r := range resp {
+				returnedResponses <- r
 			}
 			wgResp.Wait()
 		}(param)
@@ -444,41 +458,116 @@ func (gs *ParallelGraphSync) RegisterReceiverNetworkErrorListener(listener graph
 }
 
 // Pause pauses an in progress request or response
-func (gs *ParallelGraphSync) Pause(ctx context.Context, requestID graphsync.RequestID) error {
-	var reqNotFound graphsync.RequestNotFoundErr
-	if err := gs.requestManager.PauseRequest(ctx, requestID); !errors.As(err, &reqNotFound) {
-		return err
+func (gs *ParallelGraphSync) Pause(ctx context.Context, groupRequestID graphsync.RequestID) error {
+	groupReq := gs.groupReqMgr.Get(groupRequestID)
+	if groupReq == nil {
+		return nil
 	}
-	return gs.responseManager.PauseResponse(ctx, requestID)
+	var reqNotFound graphsync.RequestNotFoundErr
+	var err error
+	groupReq.RangeSubRequests(func(subReqId graphsync.RequestID, subReq *pargraphsync.SubRequest) bool {
+		if err = gs.requestManager.PauseRequest(ctx, subReqId); !errors.As(err, &reqNotFound) {
+			if err == nil {
+				// if invoke requestManager.PauseRequest success, then continue the next
+				return true
+			} else {
+				// otherwise, interrupt the next operation
+				return false
+			}
+		}
+		// if request not found in RequestManager, then invoke responseManager.PauseResponse
+		err = gs.responseManager.PauseResponse(ctx, subReqId)
+		if errors.As(err, &reqNotFound) || err == nil {
+			return true
+		}
+		return false
+	})
+	return err
 }
 
 // Unpause unpauses a request or response that was paused
 // Can also send extensions with unpause
-func (gs *ParallelGraphSync) Unpause(ctx context.Context, requestID graphsync.RequestID, extensions ...graphsync.ExtensionData) error {
-	var reqNotFound graphsync.RequestNotFoundErr
-	if err := gs.requestManager.UnpauseRequest(ctx, requestID, extensions...); !errors.As(err, &reqNotFound) {
-		return err
+func (gs *ParallelGraphSync) Unpause(ctx context.Context, groupRequestID graphsync.RequestID, extensions ...graphsync.ExtensionData) error {
+	groupReq := gs.groupReqMgr.Get(groupRequestID)
+	if groupReq == nil {
+		return nil
 	}
-	return gs.responseManager.UnpauseResponse(ctx, requestID, extensions...)
+	var reqNotFound graphsync.RequestNotFoundErr
+	var err error
+	groupReq.RangeSubRequests(func(subReqId graphsync.RequestID, subReq *pargraphsync.SubRequest) bool {
+		if err = gs.requestManager.UnpauseRequest(ctx, subReqId, extensions...); !errors.As(err, &reqNotFound) {
+			if err == nil {
+				// if invoke requestManager.UnpauseRequest success, then continue the next
+				return true
+			} else {
+				// otherwise, interrupt the next operation
+				return false
+			}
+		}
+		// if request not found in RequestManager, then invoke responseManager.UnpauseResponse
+		err = gs.responseManager.UnpauseResponse(ctx, subReqId, extensions...)
+		if errors.As(err, &reqNotFound) || err == nil {
+			return true
+		}
+		return false
+	})
+	return err
 }
 
 // Cancel cancels an in progress request or response
-func (gs *ParallelGraphSync) Cancel(ctx context.Context, requestID graphsync.RequestID) error {
-	var reqNotFound graphsync.RequestNotFoundErr
-	if err := gs.requestManager.CancelRequest(ctx, requestID); !errors.As(err, &reqNotFound) {
-		return err
+func (gs *ParallelGraphSync) Cancel(ctx context.Context, groupRequestID graphsync.RequestID) error {
+	groupReq := gs.groupReqMgr.Get(groupRequestID)
+	if groupReq == nil {
+		return nil
 	}
-	return gs.responseManager.CancelResponse(ctx, requestID)
+	var reqNotFound graphsync.RequestNotFoundErr
+	var err error
+	groupReq.RangeSubRequests(func(subReqId graphsync.RequestID, subReq *pargraphsync.SubRequest) bool {
+		if err = gs.requestManager.CancelRequest(ctx, subReqId); !errors.As(err, &reqNotFound) {
+			if err == nil {
+				// if invoke requestManager.CancelRequest success, then continue the next
+				return true
+			} else {
+				// otherwise, interrupt the next operation
+				return false
+			}
+		}
+		// if request not found in RequestManager, then invoke responseManager.CancelResponse
+		err = gs.responseManager.CancelResponse(ctx, subReqId)
+		if errors.As(err, &reqNotFound) || err == nil {
+			return true
+		}
+		return false
+	})
+	return err
 }
 
 // SendUpdate sends an update for an in progress request or response
-func (gs *ParallelGraphSync) SendUpdate(ctx context.Context, requestID graphsync.RequestID, extensions ...graphsync.ExtensionData) error {
-	// TODO: error if len(extensions)==0?
-	var reqNotFound graphsync.RequestNotFoundErr
-	if err := gs.requestManager.UpdateRequest(ctx, requestID, extensions...); !errors.As(err, &reqNotFound) {
-		return err
+func (gs *ParallelGraphSync) SendUpdate(ctx context.Context, groupRequestID graphsync.RequestID, extensions ...graphsync.ExtensionData) error {
+	groupReq := gs.groupReqMgr.Get(groupRequestID)
+	if groupReq == nil {
+		return nil
 	}
-	return gs.responseManager.UpdateResponse(ctx, requestID, extensions...)
+	var reqNotFound graphsync.RequestNotFoundErr
+	var err error
+	groupReq.RangeSubRequests(func(subReqId graphsync.RequestID, subReq *pargraphsync.SubRequest) bool {
+		if err = gs.requestManager.UpdateRequest(ctx, subReqId, extensions...); !errors.As(err, &reqNotFound) {
+			if err == nil {
+				// if invoke requestManager.UpdateRequest success, then continue the next
+				return true
+			} else {
+				// otherwise, interrupt the next operation
+				return false
+			}
+		}
+		// if request not found in RequestManager, then invoke responseManager.UpdateResponse
+		err = gs.responseManager.UpdateResponse(ctx, subReqId, extensions...)
+		if errors.As(err, &reqNotFound) || err == nil {
+			return true
+		}
+		return false
+	})
+	return err
 }
 
 // Stats produces insight on the current state of a graphsync exchange
@@ -506,6 +595,10 @@ func (gs *ParallelGraphSync) PeerState(p peer.ID) PeerState {
 		OutgoingState: gs.requestManager.PeerState(p),
 		IncomingState: gs.responseManager.PeerState(p),
 	}
+}
+
+func (gs *ParallelGraphSync) GetGroupRequestBySubRequestId(subRequestID graphsync.RequestID) pargraphsync.GroupRequest {
+	return gs.groupReqMgr.GetBySubRequestId(subRequestID)
 }
 
 type graphSyncReceiver ParallelGraphSync
