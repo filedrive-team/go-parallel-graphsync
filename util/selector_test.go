@@ -95,6 +95,6 @@ func TestTrie_Walk(t *testing.T) {
 	for _, word := range links {
 		trie.Insert(word)
 	}
-	f, _ := WalkUnionSelector(paths)
+	f, _ := UnionSelector(paths)
 	fmt.Printf("%+v\n", f)
 }

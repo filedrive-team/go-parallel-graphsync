@@ -3,6 +3,7 @@ package util
 import (
 	"fmt"
 	"github.com/ipld/go-ipld-prime"
+	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	"github.com/ipld/go-ipld-prime/datamodel"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
 	"github.com/ipld/go-ipld-prime/traversal/selector"
@@ -338,7 +339,7 @@ func PathsToTrie(paths []string) *Trie {
 	return trie
 }
 
-func WalkUnionSelector(paths []string) (ipld.Node, error) {
+func UnionSelector(paths []string) (ipld.Node, error) {
 	if len(paths) < 1 {
 		return nil, fmt.Errorf("paths should not be nil")
 	}
@@ -360,12 +361,12 @@ func WalkUnionSelector(paths []string) (ipld.Node, error) {
 }
 func UnionSelectorsFromTrieNode(t *trieNode) builder.SelectorSpec {
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
-
+	selSpec, _ := textselector.SelectorSpecFromPath("Links/0/Hash", false, ssb.ExploreRecursiveEdge())
 	if t == nil {
 		return nil
 	}
 	if len(t.children) == 0 {
-		selectorSpec, err := textselector.SelectorSpecFromPath(textselector.Expression(t.segment), false, nil)
+		selectorSpec, err := textselector.SelectorSpecFromPath(textselector.Expression(t.segment), false, ssb.ExploreRecursive(selector.RecursionLimitNone(), selSpec))
 		if err != nil {
 			return nil
 		}
@@ -408,4 +409,22 @@ func Walks(t *trieNode) {
 		Walks(v)
 	}
 	return
+}
+func NodeToPath(sel ipld.Node) (string, error) {
+	var s strings.Builder
+	dagjson.Encode(sel, &s)
+	reg := regexp.MustCompile(`"f>":{"(?s:(.*?))"`)
+	if reg == nil {
+		fmt.Println("MustCompile err")
+		return "", fmt.Errorf("MustCompile err")
+	}
+
+	result := reg.FindAllStringSubmatch(s.String(), -1)
+	var res string
+	for _, text := range result {
+		res = res + text[1] + "/"
+		//fmt.Printf("text[%v] = %v\n", i, text[1])
+	}
+	fmt.Println(res)
+	return res, nil
 }

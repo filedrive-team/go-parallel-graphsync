@@ -185,7 +185,7 @@ func TestUnionSelector(t *testing.T) {
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			res, err := util.WalkUnionSelector(testCase.paths)
+			res, err := util.UnionSelector(testCase.paths)
 			if (err == nil) != testCase.expect {
 				t.Fatal(err)
 			}
