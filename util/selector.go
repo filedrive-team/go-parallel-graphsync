@@ -432,7 +432,7 @@ func CheckIfLinkSelector(sel ipld.Node) bool {
 	var s strings.Builder
 	dagjson.Encode(sel, &s)
 	fmt.Println(s.String())
-	reg := regexp.MustCompile(`((\{"\|":\[\{"\.":\{}},)*\{"f":\{"f>":\{"Links":(\{"\|":\[\{"\.":\{}},)*\{"f":\{"f>":\{"\d+":(\{"\|":\[\{"\.":\{}},)*\{"f":\{"f>":\{"Hash":{"\.")+`)
+	reg := regexp.MustCompile(`((\{"\|":\[\{"\.":\{}},)?\{"f":\{"f>":\{"Links":(\{"\|":\[\{"\.":\{}},)?\{"f":\{"f>":\{"\d+":(\{"\|":\[\{"\.":\{}},)?\{"f":\{"f>":\{"Hash":{"\.")+`)
 	if reg == nil {
 		fmt.Println("MustCompile err")
 		return false
