@@ -428,3 +428,38 @@ func NodeToPath(sel ipld.Node) (string, error) {
 	fmt.Println(res)
 	return res, nil
 }
+func CheckIfLinkSelector(sel ipld.Node) bool {
+	var s strings.Builder
+	dagjson.Encode(sel, &s)
+	fmt.Println(s.String())
+	reg := regexp.MustCompile(`((\{"\|":\[\{"\.":\{}},)*\{"f":\{"f>":\{"Links":(\{"\|":\[\{"\.":\{}},)*\{"f":\{"f>":\{"\d+":(\{"\|":\[\{"\.":\{}},)*\{"f":\{"f>":\{"Hash":{"\.")+`)
+	if reg == nil {
+		fmt.Println("MustCompile err")
+		return false
+	}
+
+	result := reg.FindAllStringSubmatch(s.String(), -1)
+	for _, res := range result {
+		for _, r := range res {
+			if r != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+func CheckIfUnixfsSelector(sel ipld.Node) bool {
+	var s strings.Builder
+	dagjson.Encode(sel, &s)
+	reg := regexp.MustCompile(`\{".":\{}},("as":"unixfs"}+,)+`)
+	if reg == nil {
+		fmt.Println("MustCompile err")
+		return false
+	}
+
+	result := reg.FindAllStringSubmatch(s.String(), -1)
+	if len(result) == 0 {
+		return false
+	}
+	return true
+}
