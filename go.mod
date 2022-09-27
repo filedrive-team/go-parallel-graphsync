@@ -3,7 +3,7 @@ module github.com/filedrive-team/go-parallel-graphsync
 go 1.16
 
 require (
-	github.com/filecoin-project/go-address v1.0.0
+
 	github.com/gopherjs/gopherjs v0.0.0-20190812055157-5d271430af9f // indirect
 	github.com/ipfs/go-block-format v0.0.3
 	github.com/ipfs/go-blockservice v0.3.0
@@ -21,6 +21,7 @@ require (
 	github.com/ipfs/go-merkledag v0.6.0
 	github.com/ipfs/go-peertaskqueue v0.7.1
 	github.com/ipfs/go-unixfs v0.3.1
+	github.com/ipfs/go-unixfsnode v1.4.0
 	github.com/ipld/go-car/v2 v2.4.1
 	github.com/ipld/go-codec-dagpb v1.3.1
 	github.com/ipld/go-ipld-prime v0.18.0
