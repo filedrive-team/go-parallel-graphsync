@@ -50,7 +50,7 @@ func (er *ERContext) ParseSelector(n datamodel.Node) (selector.Selector, error) 
 	case selector.SelectorKey_ExploreInterpretAs:
 		return er.ePc.selPc.ParseExploreInterpretAs(v)
 	case selector.SelectorKey_Matcher:
-		return er.ePc.selPc.ParseMatcher(v)
+		return er.ParseMatcher(v)
 	default:
 		return nil, fmt.Errorf("selector spec parse rejected: %q is not a known member of the selector union", kstr)
 	}

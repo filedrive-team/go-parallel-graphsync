@@ -16,7 +16,7 @@ import (
 func TestParseSelector(t *testing.T) {
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
 	all := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
-	fromPath1, _ := textselector.SelectorSpecFromPath("/0/Hash", false, all)
+	fromPath1, _ := textselector.SelectorSpecFromPath("/0/Hash", false, nil)
 	fromPath2, _ := textselector.SelectorSpecFromPath("/1/Hash", false, all)
 	fromPath3, _ := textselector.SelectorSpecFromPath("/2/Hash", false, all)
 	fromPath4, _ := textselector.SelectorSpecFromPath("/3/Hash", false, all)
@@ -94,7 +94,7 @@ func TestParseSelector(t *testing.T) {
 			}
 			var paths []string
 			for _, ec := range er.eCtx {
-				fmt.Println(ec.path)
+				fmt.Println(ec.path, ec.edgesFound)
 				paths = append(paths, ec.path)
 			}
 			if !reflect.DeepEqual(paths, tc.resPaths) {
