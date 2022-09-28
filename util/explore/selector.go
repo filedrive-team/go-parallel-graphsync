@@ -19,6 +19,8 @@ type ERContext struct {
 }
 
 // ParseSelector creates a Selector from an IPLD Selector Node with the given context
+//todo Maybe there is a logical problem, and the recursive call will transfer to the method of IPLD prime,
+//todo but there is no problem trying to build a selector that meets the requirements, maybe it will be fixed in the future when problems arise
 func (er *ERContext) ParseSelector(n datamodel.Node) (selector.Selector, error) {
 	if n.Kind() != datamodel.Kind_Map {
 		return nil, fmt.Errorf("selector spec parse rejected: selector is a keyed union and thus must be a map")
@@ -77,4 +79,43 @@ func (er *ERContext) generate(erc *exploreRecursiveContext) {
 		er.eCtx = append(er.eCtx, erc)
 	}
 
+}
+
+// ParseMatcher assembles a Selector
+// from a matcher selector node
+// TODO: Parse labels and conditions
+func (er *ERContext) ParseMatcher(n datamodel.Node) (selector.Selector, error) {
+	matcher, err := er.ePc.selPc.ParseMatcher(n)
+	if err != nil || matcher == nil {
+		return nil, err
+	}
+	er.generate(&exploreRecursiveContext{})
+	return matcher, nil
+}
+
+// ParseExploreUnion assembles a Selector
+// from an ExploreUnion selector node
+func (er *ERContext) ParseExploreUnion(n datamodel.Node) (selector.Selector, error) {
+	if n.Kind() != datamodel.Kind_List {
+		return nil, fmt.Errorf("selector spec parse rejected: explore union selector must be a list")
+	}
+	x := selector.ExploreUnion{
+		Members: make([]selector.Selector, 0, n.Length()),
+	}
+	pa := er.union
+	for itr := n.ListIterator(); !itr.Done(); {
+		_, v, err := itr.Next()
+		if err != nil {
+			return nil, fmt.Errorf("error during selector spec parse: %w", err)
+		}
+		member, err := er.ParseSelector(v)
+		if err != nil {
+			return nil, err
+		}
+		//clear store path
+		er.ePc.path = nil
+		er.ePc.path = append(er.ePc.path, pa...)
+		x.Members = append(x.Members, member)
+	}
+	return x, nil
 }
