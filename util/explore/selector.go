@@ -3,6 +3,7 @@ package explore
 import (
 	"fmt"
 	"github.com/ipld/go-ipld-prime/traversal/selector"
+	"strings"
 
 	"github.com/ipld/go-ipld-prime/datamodel"
 )
@@ -72,5 +73,8 @@ func (er *ERContext) generate(erc *exploreRecursiveContext) {
 	}
 	erc.path = datamodel.NewPath(ssss).String()
 	//ectx = append(ectx, erc)
-	er.eCtx = append(er.eCtx, erc)
+	if strings.HasSuffix(erc.path, "Hash") {
+		er.eCtx = append(er.eCtx, erc)
+	}
+
 }

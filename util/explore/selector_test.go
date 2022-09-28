@@ -16,7 +16,7 @@ import (
 func TestParseSelector(t *testing.T) {
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
 	all := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
-	fromPath1, _ := textselector.SelectorSpecFromPath("/0/Hash", false, nil)
+	fromPath1, _ := textselector.SelectorSpecFromPath("/0/Hash", true, nil)
 	fromPath2, _ := textselector.SelectorSpecFromPath("/1/Hash", false, all)
 	fromPath3, _ := textselector.SelectorSpecFromPath("/2/Hash", false, all)
 	fromPath4, _ := textselector.SelectorSpecFromPath("/3/Hash", false, all)
@@ -38,6 +38,9 @@ func TestParseSelector(t *testing.T) {
 	selmore3, _ := textselector.SelectorSpecFromPath("/4/Hash/Links/1/Hash", false, all)
 	selMore, _ := textselector.SelectorSpecFromPath("Links", false, ssb.ExploreUnion(selmore1, selmore2, selmore3, fromPath4))
 
+	selU0, _ := textselector.SelectorSpecFromPath("/1/Hash/Links", false, ssb.ExploreUnion(fromPath1, fromPath2))
+	selU1, _ := textselector.SelectorSpecFromPath("/0/Hash/Links", false, ssb.ExploreUnion(selU0, fromPath1))
+	selU2, _ := textselector.SelectorSpecFromPath("Links", false, ssb.ExploreUnion(selU1, fromPath4))
 	testCases := []struct {
 		name     string
 		selRes   builder.SelectorSpec
@@ -73,6 +76,15 @@ func TestParseSelector(t *testing.T) {
 				"Links/0/Hash/Links/2/Hash",
 				"Links/2/Hash/Links/2/Hash",
 				"Links/4/Hash/Links/1/Hash",
+				"Links/3/Hash",
+			},
+		},
+		{
+			name:   "union-union",
+			selRes: selU2,
+			resPaths: []string{"Links/0/Hash/Links/1/Hash/Links/0/Hash",
+				"Links/0/Hash/Links/1/Hash/Links/1/Hash",
+				"Links/0/Hash/Links/0/Hash",
 				"Links/3/Hash",
 			},
 		},

@@ -451,7 +451,7 @@ func CheckIfLinkSelector(sel ipld.Node) bool {
 func CheckIfUnixfsSelector(sel ipld.Node) bool {
 	var s strings.Builder
 	dagjson.Encode(sel, &s)
-	reg := regexp.MustCompile(`\{".":\{}},("as":"unixfs"}+,)+`)
+	reg := regexp.MustCompile(`\{".":\{}},("as":"unixfs"}+,?)+`)
 	if reg == nil {
 		fmt.Println("MustCompile err")
 		return false
