@@ -199,7 +199,7 @@ func (er *ERContext) ParseExploreRecursive(n datamodel.Node) (selector.Selector,
 	if erc.edgesFound == 0 {
 		return nil, fmt.Errorf("selector spec parse rejected: ExploreRecursive must have at least one ExploreRecursiveEdge")
 	}
-	er.generate(erc)
+	er.collectPath(erc)
 	var stopCondition *selector.Condition
 	stop, err := n.LookupByString(selector.SelectorKey_StopAt)
 	if err == nil {

@@ -2,7 +2,9 @@ package explore
 
 import (
 	"fmt"
+	"github.com/ipld/go-ipld-prime"
 	"github.com/ipld/go-ipld-prime/traversal/selector"
+	textselector "github.com/ipld/go-ipld-selector-text-lite"
 	"strings"
 
 	"github.com/ipld/go-ipld-prime/datamodel"
@@ -68,7 +70,7 @@ func (c ERParseContext) PushParent(parent selector.ParsedParent) *ERContext {
 func (c *ERParseContext) PushLinks(l string) {
 	c.path = append(c.path, l)
 }
-func (er *ERContext) generate(erc *exploreRecursiveContext) {
+func (er *ERContext) collectPath(erc *exploreRecursiveContext) {
 	var ssss []datamodel.PathSegment
 	for _, p := range er.ePc.path {
 		ssss = append(ssss, datamodel.PathSegmentOfString(p))
@@ -80,6 +82,22 @@ func (er *ERContext) generate(erc *exploreRecursiveContext) {
 	}
 
 }
+func GenerateSelectors(sel ipld.Node) (edge, nedge []ipld.Node, err error) {
+	var er = &ERContext{}
+	_, err = er.ParseSelector(sel)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, ec := range er.eCtx {
+		spec, _ := textselector.SelectorSpecFromPath(textselector.Expression(ec.path), false, nil)
+		if ec.edgesFound > 0 {
+			edge = append(edge, spec.Node())
+		} else {
+			nedge = append(nedge, spec.Node())
+		}
+	}
+	return edge, nedge, nil
+}
 
 // ParseMatcher assembles a Selector
 // from a matcher selector node
@@ -89,7 +107,7 @@ func (er *ERContext) ParseMatcher(n datamodel.Node) (selector.Selector, error) {
 	if err != nil || matcher == nil {
 		return nil, err
 	}
-	er.generate(&exploreRecursiveContext{})
+	er.collectPath(&exploreRecursiveContext{})
 	return matcher, nil
 }
 

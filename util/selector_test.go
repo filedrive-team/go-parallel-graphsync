@@ -158,7 +158,7 @@ func TestCheckIfUnixfsSelector(t *testing.T) {
 			expect: true,
 		},
 		{
-			name:   "Err-Unix",
+			name:   "True-Unix",
 			path:   "Links/0/Links",
 			expect: true,
 		},
