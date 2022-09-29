@@ -44,6 +44,10 @@ var globalAddrInfos []peer.AddrInfo
 var globalRoot cid.Cid
 var globalBs blockstore.Blockstore
 
+var bigCarRootCid cid.Cid
+var bigCarParExchange pargraphsync.ParallelGraphExchange
+var bigCarAddrInfos []peer.AddrInfo
+
 const ServicesNum = 3
 
 //func TestWrapV1File(t *testing.T) {
@@ -127,6 +131,8 @@ func TestMain(m *testing.M) {
 	for _, addrInfo := range addrInfos {
 		globalHost.Peerstore().AddAddr(addrInfo.ID, addrInfo.Addrs[0], peerstore.PermanentAddrTTL)
 	}
+	bigCarRootCid, _ = cid.Parse("QmSvtt6abwrp3MybYqHHA4BdFjjuLBABXjLEVQKpMUfUU8")
+	bigCarParExchange, bigCarAddrInfos = startWithBigCar()
 	os.Exit(m.Run())
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
-	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
 	dssync "github.com/ipfs/go-datastore/sync"
 	"github.com/ipfs/go-graphsync"
@@ -18,9 +17,6 @@ import (
 	"github.com/ipld/go-ipld-prime/traversal/selector"
 	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
 	"github.com/libp2p/go-libp2p-core/peer"
-	"github.com/libp2p/go-libp2p-core/peerstore"
-	"os"
-	"path"
 	"strings"
 	"sync"
 	"testing"
@@ -81,31 +77,7 @@ func TestGraphSync2(t *testing.T) {
 	wg.Wait()
 }
 
-func TestUnionSelector(t *testing.T) {
-	mainCtx, cancel := context.WithCancel(context.TODO())
-	defer cancel()
-	bs, err := loadCarV2Blockstore("big-v2.car")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, 1, 9810, bs, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	keyFile := path.Join(os.TempDir(), "gs-key9710")
-	rootCid, _ := cid.Parse("QmSvtt6abwrp3MybYqHHA4BdFjjuLBABXjLEVQKpMUfUU8")
-	host, pgs, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9710", keyFile, bs)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	pgs.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
-		fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-		//hookActions.UsePersistenceOption("newLinkSys")
-	})
-
-	host.Peerstore().AddAddr(addrInfos[0].ID, addrInfos[0].Addrs[0], peerstore.PermanentAddrTTL)
-
+func TestSimpleUnionSelector(t *testing.T) {
 	testCases := []struct {
 		name   string
 		paths  []string
@@ -197,7 +169,7 @@ func TestUnionSelector(t *testing.T) {
 					return
 				}
 			}
-			result := comparePaths(t, pgs, res, testCase.paths, addrInfos[0].ID, cidlink.Link{Cid: rootCid})
+			result := comparePaths(t, bigCarParExchange, res, testCase.paths, bigCarAddrInfos[0].ID, cidlink.Link{Cid: bigCarRootCid})
 			if result != testCase.expect {
 				t.Errorf("not equal,\n%v\n", s.String())
 			}
@@ -221,6 +193,9 @@ func comparePaths(t *testing.T, gs graphsync.GraphExchange, node1 ipld.Node, pat
 		paths1 = append(paths1, blk.Path.String())
 	}
 	fmt.Printf("get paths %+v\n", paths1)
+	return pathInPath(paths1, paths2)
+}
+func pathInPath(paths1, paths2 []string) bool {
 	for _, pa2 := range paths2 {
 		have := false
 		for _, pa1 := range paths1 {
