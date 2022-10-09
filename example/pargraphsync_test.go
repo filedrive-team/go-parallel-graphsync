@@ -7,7 +7,6 @@ import (
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
 	"github.com/filedrive-team/go-parallel-graphsync/impl"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
-	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-blockservice"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
@@ -25,14 +24,11 @@ import (
 	unixfile "github.com/ipfs/go-unixfs/file"
 	"github.com/ipfs/go-unixfs/importer/balanced"
 	ihelper "github.com/ipfs/go-unixfs/importer/helpers"
-	dagpb "github.com/ipld/go-codec-dagpb"
 	"github.com/ipld/go-ipld-prime/datamodel"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
 	"github.com/ipld/go-ipld-prime/traversal/selector"
 	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
-	selectorparse "github.com/ipld/go-ipld-prime/traversal/selector/parse"
-	textselector "github.com/ipld/go-ipld-selector-text-lite"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/peer"
@@ -42,7 +38,6 @@ import (
 	"math/rand"
 	"os"
 	"path"
-	"strings"
 	"testing"
 	"time"
 )
@@ -124,59 +119,6 @@ func TestParallelGraphSync(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	}
-}
-
-func TestGraphSyncSelectorFromMulPath(t *testing.T) {
-	mainCtx, cancel := context.WithCancel(context.TODO())
-	defer cancel()
-
-	globalParExchange.UnregisterPersistenceOption("newLinkSys")
-	memds := datastore.NewMapDatastore()
-	membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
-	newlsys := storeutil.LinkSystemForBlockstore(membs)
-	if err := globalParExchange.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
-		t.Fatal(err)
-	}
-
-	sels := make([]datamodel.Node, 0)
-	selector1, err := util.SelectorSpecFromMulPath("Links/0/Hash/Links/2-4", true, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	selector2, err := util.SelectorSpecFromMulPath("Links/0/Hash/Links/4-7", true, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	selector3, err := util.SelectorSpecFromMulPath("Links/0/Hash/Links/7-11", true, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sels = append(sels, selector1.Node())
-	sels = append(sels, selector2.Node())
-	sels = append(sels, selector3.Node())
-
-	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
-	for i := 0; i < ServicesNum; i++ {
-		params = append(params, pargraphsync.RequestParam{
-			PeerId:   globalAddrInfos[i].ID,
-			Root:     cidlink.Link{globalRoot},
-			Selector: sels[i],
-		})
-	}
-
-	responseProgress, errors := globalParExchange.RequestMany(mainCtx, params)
-	go func() {
-		select {
-		case err := <-errors:
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-	}()
-
-	for blk := range responseProgress {
-		fmt.Printf("path=%s \n", blk.Path.String())
 	}
 }
 
@@ -303,129 +245,6 @@ func BenchmarkGraphSync(b *testing.B) {
 		b.Fatal("not pass")
 	}
 
-}
-
-func TestParallelGraphSyncDivideSelector(t *testing.T) {
-	mainCtx, cancel := context.WithCancel(context.TODO())
-	defer cancel()
-
-	globalParExchange.UnregisterPersistenceOption("newLinkSys")
-	memds := datastore.NewMapDatastore()
-	membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
-	newlsys := storeutil.LinkSystemForBlockstore(membs)
-	if err := globalParExchange.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
-		t.Fatal(err)
-	}
-
-	// create a selector to traverse the whole tree
-	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
-	sel := ssb.ExploreRecursive(selector.RecursionLimitNone(),
-		ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
-			specBuilder.Insert("Links", ssb.ExploreRange(1, 11,
-				ssb.ExploreUnion(ssb.ExploreAll(ssb.ExploreRecursiveEdge()))))
-		})).Node()
-	sels, err := util.DivideMapSelector(sel, ServicesNum, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
-	for i := 0; i < ServicesNum; i++ {
-
-		params = append(params, pargraphsync.RequestParam{
-			PeerId:   globalAddrInfos[i].ID,
-			Root:     cidlink.Link{globalRoot},
-			Selector: sels[i],
-		})
-	}
-
-	responseProgress, errors := globalParExchange.RequestMany(mainCtx, params)
-	go func() {
-		select {
-		case err := <-errors:
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-	}()
-
-	for blk := range responseProgress {
-		blk.Path.String()
-	}
-
-}
-
-func TestParallelGraphSyncWithoutRange(t *testing.T) {
-	mainCtx, cancel := context.WithCancel(context.TODO())
-	defer cancel()
-
-	globalParExchange.UnregisterPersistenceOption("newLinkSys")
-	memds := datastore.NewMapDatastore()
-	membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
-	newlsys := storeutil.LinkSystemForBlockstore(membs)
-	if err := globalParExchange.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
-		t.Fatal(err)
-	}
-
-	//ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
-	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
-
-	sel, err := textselector.SelectorSpecFromPath("Links/0/Hash/Links/0", true, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	responseProgressRoot, errorsRoot := globalParExchange.Request(context.TODO(), globalAddrInfos[0].ID, cidlink.Link{globalRoot}, sel.Node())
-	go func() {
-		select {
-		case err := <-errorsRoot:
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-	}()
-	var linkNums int64 = -1
-	for blk := range responseProgressRoot {
-		var buf strings.Builder
-		dagpb.Encode(blk.Node, &buf)
-		fmt.Printf("path=%s \n", blk.Path.String())
-		//fmt.Println()
-		if blocks.NewBlock([]byte(buf.String())).Cid() != blocks.NewBlock([]byte("")).Cid() && blocks.NewBlock([]byte(buf.String())).Cid() != globalRoot {
-			//fmt.Printf(" aaaa:%v\n", blocks.NewBlock([]byte(buf.String())))
-			protobuf, err := merkledag.DecodeProtobuf([]byte(buf.String()))
-			if err != nil {
-				return
-			}
-			linkNums = int64(len(protobuf.Links()))
-		}
-	}
-	if linkNums == -1 {
-		t.Fatalf("linkNums is -1")
-	}
-	fmt.Printf("linkNums=%d\n", linkNums)
-	sels, err := util.DivideMapSelector(selectorparse.CommonSelector_ExploreAllRecursively, ServicesNum, linkNums)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < ServicesNum; i++ {
-		params = append(params, pargraphsync.RequestParam{
-			PeerId:   globalAddrInfos[i].ID,
-			Root:     cidlink.Link{globalRoot},
-			Selector: sels[i],
-		})
-	}
-	responseProgress, errors := globalParExchange.RequestMany(mainCtx, params)
-	go func() {
-		select {
-		case err := <-errors:
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-	}()
-
-	for blk := range responseProgress {
-		fmt.Printf("path=%s \n", blk.Path.String())
-	}
 }
 
 func TestParallelGraphSyncExploreRecursiveLeftNode(t *testing.T) {
