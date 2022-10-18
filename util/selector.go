@@ -131,15 +131,7 @@ func UnionSelector(paths []string) (ipld.Node, error) {
 		return selectorSpec.Node(), err
 	}
 	trieTree := PathsToTrie(paths)
-	//fmt.Printf("%v", trieTree)
 	sel := UnionSelectorsFromTrieNode(trieTree.root)
-	//var s strings.Builder
-	//err := dagjson.Encode(a.Node(), &s)
-	//if err != nil {
-	//	fmt.Printf("eerr:%v\n", err)
-	//	return nil, err
-	//}
-	//fmt.Printf("result %v\n", s.String())
 	return sel.Node(), nil
 }
 func UnionSelectorsFromTrieNode(t *trieNode) builder.SelectorSpec {
@@ -193,24 +185,7 @@ func Walks(t *trieNode) {
 	}
 	return
 }
-func NodeToPath(sel ipld.Node) (string, error) {
-	var s strings.Builder
-	dagjson.Encode(sel, &s)
-	reg := regexp.MustCompile(`"f>":{"(?s:(.*?))"`)
-	if reg == nil {
-		fmt.Println("MustCompile err")
-		return "", fmt.Errorf("MustCompile err")
-	}
 
-	result := reg.FindAllStringSubmatch(s.String(), -1)
-	var res string
-	for _, text := range result {
-		res = res + text[1] + "/"
-		//fmt.Printf("text[%v] = %v\n", i, text[1])
-	}
-	fmt.Println(res)
-	return res, nil
-}
 func CheckIfLinkSelector(sel ipld.Node) bool {
 	var s strings.Builder
 	dagjson.Encode(sel, &s)

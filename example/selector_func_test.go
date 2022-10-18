@@ -54,7 +54,7 @@ func TestSimpleDivideSelector(t *testing.T) {
 		StartedTasks: make(map[string]struct{}),
 		RunningTasks: make(chan util.Tasks, 1),
 		DoneTasks:    make(map[string]struct{}),
-		Root:         cidlink.Link{Cid: bigCarRootCid},
+		RootCid:      cidlink.Link{Cid: bigCarRootCid},
 		PeerIds:      bigCarAddrInfos,
 	}
 
@@ -96,6 +96,26 @@ func TestSimpleDivideSelector(t *testing.T) {
 			links: []string{"Links", "Links/1/Hash/Links"},
 			num:   []int64{5, 4},
 			paths: []string{
+				"Links/1/Hash/Links/0/Hash",
+				"Links/1/Hash/Links/1/Hash",
+				"Links/1/Hash/Links/2/Hash",
+				"Links/1/Hash/Links/3/Hash",
+				"Links/0/Hash",
+				"Links/1/Hash",
+				"Links/2/Hash",
+				"Links/3/Hash",
+				"Links/4/Hash",
+			},
+			expectRes: true,
+		},
+		{
+			name:  "more-true",
+			links: []string{"Links", "Links/1/Hash/Links", "Links/2/Hash/Links"},
+			num:   []int64{5, 4, 3},
+			paths: []string{
+				"Links/2/Hash/Links/0/Hash",
+				"Links/2/Hash/Links/1/Hash",
+				"Links/2/Hash/Links/2/Hash",
 				"Links/1/Hash/Links/0/Hash",
 				"Links/1/Hash/Links/1/Hash",
 				"Links/1/Hash/Links/2/Hash",

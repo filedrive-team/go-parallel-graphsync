@@ -25,7 +25,7 @@ type ParGSTask struct {
 	StartedTasks map[string]struct{}
 	RunningTasks chan Tasks
 	DoneTasks    map[string]struct{}
-	Root         cidlink.Link
+	RootCid      cidlink.Link
 	PeerIds      []peer.AddrInfo
 }
 
@@ -48,7 +48,7 @@ func StartParGraphSyncTask(ctx context.Context, gs pargraphsync.ParallelGraphExc
 		StartedTasks: make(map[string]struct{}),
 		RunningTasks: make(chan Tasks, 1),
 		DoneTasks:    make(map[string]struct{}),
-		Root:         root,
+		RootCid:      root,
 		PeerIds:      peerIds,
 	}
 	task := Task{LeftSelector(""), s.choosePeer()}
@@ -63,7 +63,7 @@ func (s *ParGSTask) StartRun(ctx context.Context) {
 			for _, v := range ta.Tasks {
 				params = append(params, pargraphsync.RequestParam{
 					PeerId:   v.PeerId,
-					Root:     s.Root,
+					Root:     s.RootCid,
 					Selector: v.Sel,
 				})
 			}
