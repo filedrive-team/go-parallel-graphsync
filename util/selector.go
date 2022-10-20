@@ -132,35 +132,25 @@ func UnionSelector(paths []string) (ipld.Node, error) {
 	}
 	trieTree := PathsToTrie(paths)
 	sel := UnionSelectorsFromTrieNode(trieTree.root)
+	if sel == nil {
+		return nil, fmt.Errorf("selector is nil")
+	}
 	return sel.Node(), nil
 }
 func UnionSelectorsFromTrieNode(t *trieNode) builder.SelectorSpec {
-	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
-	selSpec, _ := textselector.SelectorSpecFromPath("Links/0/Hash", false, ssb.ExploreRecursiveEdge())
 	if t == nil {
 		return nil
 	}
-	if len(t.children) == 0 {
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	switch len(t.children) {
+	case 0:
+		selSpec, _ := textselector.SelectorSpecFromPath(LeftLinks, false, ssb.ExploreRecursiveEdge())
 		selectorSpec, err := textselector.SelectorSpecFromPath(textselector.Expression(t.segment), false, ssb.ExploreRecursive(selector.RecursionLimitNone(), selSpec))
 		if err != nil {
 			return nil
 		}
 		return selectorSpec
-	} else if len(t.children) > 1 {
-		var specs []builder.SelectorSpec
-		for _, v := range t.children {
-			specs = append(specs, UnionSelectorsFromTrieNode(v))
-		}
-		selectorSpec := ssb.ExploreUnion(specs...)
-		if t.segment != "!" {
-			return ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
-				specBuilder.Insert(t.segment, selectorSpec)
-			})
-		} else {
-			return selectorSpec
-		}
-
-	} else {
+	case 1:
 		for _, v := range t.children {
 			if t.segment != "!" {
 				return ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
@@ -170,10 +160,18 @@ func UnionSelectorsFromTrieNode(t *trieNode) builder.SelectorSpec {
 				return UnionSelectorsFromTrieNode(v)
 			}
 		}
-
+	default:
+		var specs []builder.SelectorSpec
+		for _, v := range t.children {
+			specs = append(specs, UnionSelectorsFromTrieNode(v))
+		}
+		return ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+			specBuilder.Insert(t.segment, ssb.ExploreUnion(specs...))
+		})
 	}
 	return nil
 }
+
 func Walks(t *trieNode) {
 	if t == nil {
 		return

@@ -14,6 +14,7 @@ import (
 	textselector "github.com/ipld/go-ipld-selector-text-lite"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/peerstore"
+	"math"
 	"os"
 	"path"
 	"strings"
@@ -109,22 +110,22 @@ func TestSimpleDivideSelector(t *testing.T) {
 			expectRes: true,
 		},
 		{
-			name:  "more-true",
+			name:  "more-links",
 			links: []string{"Links", "Links/1/Hash/Links", "Links/2/Hash/Links"},
 			num:   []int64{5, 4, 3},
 			paths: []string{
-				"Links/2/Hash/Links/0/Hash",
-				"Links/2/Hash/Links/1/Hash",
-				"Links/2/Hash/Links/2/Hash",
-				"Links/1/Hash/Links/0/Hash",
-				"Links/1/Hash/Links/1/Hash",
-				"Links/1/Hash/Links/2/Hash",
-				"Links/1/Hash/Links/3/Hash",
 				"Links/0/Hash",
 				"Links/1/Hash",
 				"Links/2/Hash",
 				"Links/3/Hash",
 				"Links/4/Hash",
+				"Links/1/Hash/Links/0/Hash",
+				"Links/1/Hash/Links/1/Hash",
+				"Links/1/Hash/Links/2/Hash",
+				"Links/1/Hash/Links/3/Hash",
+				"Links/2/Hash/Links/0/Hash",
+				"Links/2/Hash/Links/1/Hash",
+				"Links/2/Hash/Links/2/Hash",
 			},
 			expectRes: true,
 		},
@@ -298,4 +299,8 @@ func compare(doneTasks map[string]struct{}, paths2 []string) bool {
 		}
 	}
 	return true
+}
+func TestName(t *testing.T) {
+	fmt.Println(math.Ceil(float64(3) / 4))
+
 }

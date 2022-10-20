@@ -11,6 +11,7 @@ import (
 	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
 	textselector "github.com/ipld/go-ipld-selector-text-lite"
 	"github.com/libp2p/go-libp2p-core/peer"
+	"math"
 )
 
 const (
@@ -136,7 +137,7 @@ func (s *ParGSTask) run(ctx context.Context, params []pargraphsync.RequestParam)
 }
 
 func dividePath(paths []string, peerIds []peer.AddrInfo) Tasks {
-	ave := len(paths)/len(peerIds) + 1
+	ave := int(math.Ceil(float64(len(paths)) / float64(len(peerIds))))
 	var selPaths [][]string
 	var start, end = 0, 0
 	num := len(peerIds)

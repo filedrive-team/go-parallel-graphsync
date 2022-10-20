@@ -3,6 +3,7 @@ package util
 import (
 	"fmt"
 	"github.com/ipfs/go-unixfsnode"
+	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	textselector "github.com/ipld/go-ipld-selector-text-lite"
 	"strings"
 	"testing"
@@ -12,8 +13,8 @@ func TestTrie_Walk(t *testing.T) {
 	trie := NewTrie()
 	var paths = []string{
 		"Links/0/Hash/Links/0/Hash",
-		"Links/1/Hash/Links/1/Hash",
 		"Links/0/Hash/Links/2/Hash",
+		"Links/1/Hash/Links/1/Hash",
 	}
 	var links [][]string
 	for _, path := range paths {
@@ -23,7 +24,9 @@ func TestTrie_Walk(t *testing.T) {
 		trie.Insert(word)
 	}
 	f, _ := UnionSelector(paths)
-	fmt.Printf("%+v\n", f)
+	var s strings.Builder
+	dagjson.Encode(f, &s)
+	fmt.Printf("%+v\n", s.String())
 }
 func TestCheckIfLinkSelector(t *testing.T) {
 	testCases := []struct {
