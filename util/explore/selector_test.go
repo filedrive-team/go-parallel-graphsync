@@ -41,6 +41,9 @@ func TestParseSelector(t *testing.T) {
 	selU0, _ := textselector.SelectorSpecFromPath("/1/Hash/Links", false, ssb.ExploreUnion(fromPath1, fromPath2))
 	selU1, _ := textselector.SelectorSpecFromPath("/0/Hash/Links", false, ssb.ExploreUnion(selU0, fromPath1))
 	selU2, _ := textselector.SelectorSpecFromPath("Links", false, ssb.ExploreUnion(selU1, fromPath4))
+
+	selUnix, _ := textselector.SelectorSpecFromPath("a/b/c", false, selSameDepth)
+
 	testCases := []struct {
 		name     string
 		selRes   builder.SelectorSpec
@@ -86,6 +89,14 @@ func TestParseSelector(t *testing.T) {
 				"Links/0/Hash/Links/1/Hash/Links/1/Hash",
 				"Links/0/Hash/Links/0/Hash",
 				"Links/3/Hash",
+			},
+		},
+		{
+			name:   "unix",
+			selRes: selUnix,
+			resPaths: []string{
+				"a/b/c/Links/0/Hash",
+				"a/b/c/Links/1/Hash",
 			},
 		},
 	}
