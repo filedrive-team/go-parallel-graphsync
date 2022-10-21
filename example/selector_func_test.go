@@ -137,7 +137,9 @@ func TestSimpleDivideSelector(t *testing.T) {
 			for i, link := range testCase.links {
 				pathMap[link] = testCase.num[i]
 			}
+			//simulate the collection of child nodes and child node information
 			s.CollectTasks(pathMap)
+
 			s.StartRun(context.TODO())
 			if compare(s.DoneTasks, testCase.paths) != testCase.expectRes {
 				t.Fatal("not equal")

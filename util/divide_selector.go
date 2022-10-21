@@ -79,6 +79,7 @@ func (s *ParGSTask) StartRun(ctx context.Context) {
 }
 
 func (s *ParGSTask) Close() {
+	//todo more action
 	fmt.Println("close")
 }
 func (s *ParGSTask) CollectTasks(pathMap map[string]int64) {
@@ -138,23 +139,18 @@ func (s *ParGSTask) run(ctx context.Context, params []pargraphsync.RequestParam)
 
 func dividePath(paths []string, peerIds []peer.AddrInfo) Tasks {
 	ave := int(math.Ceil(float64(len(paths)) / float64(len(peerIds))))
-	var selPaths [][]string
 	var start, end = 0, 0
 	num := len(peerIds)
 	if num > len(paths) {
 		num = len(paths)
 	}
+	var tasks []Task
 	for i := 0; i < num; i++ {
 		end = start + ave
 		if i == num-1 {
 			end = len(paths)
 		}
-		selPaths = append(selPaths, paths[start:end])
-		start = end
-	}
-	var tasks []Task
-	for i, v := range selPaths {
-		sel, err := UnionSelector(v)
+		sel, err := UnionSelector(paths[start:end])
 		if err != nil {
 			continue
 		}
@@ -162,7 +158,7 @@ func dividePath(paths []string, peerIds []peer.AddrInfo) Tasks {
 			Sel:    sel,
 			PeerId: peerIds[i].ID,
 		})
-
+		start = end
 	}
 	return Tasks{tasks}
 }
