@@ -11,20 +11,20 @@ import (
 )
 
 func TestTrie_Walk(t *testing.T) {
-	trie := NewTrie()
+	trie := newTrie(false)
 	var paths = []string{
 		"Links/0/Hash/Links/0/Hash",
 		"Links/0/Hash/Links/2/Hash",
 		"Links/1/Hash/Links/1/Hash",
 	}
-	var links [][]string
 	for _, path := range paths {
-		links = append(links, strings.Split(path, "/"))
+		trie.InsertPath(path)
 	}
-	for _, word := range links {
-		trie.Insert(word)
-	}
-	f, _ := UnionSelector(paths)
+	trie.Walks(func(name string, nd *trieNode) bool {
+		t.Logf("name=%s", name)
+		return true
+	})
+	f, _ := UnionPathSelector(paths, false)
 	var s strings.Builder
 	dagjson.Encode(f, &s)
 	fmt.Printf("%+v\n", s.String())
