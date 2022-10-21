@@ -20,7 +20,6 @@ import (
 	"github.com/ipfs/go-merkledag"
 	unixfile "github.com/ipfs/go-unixfs/file"
 	"github.com/ipfs/go-unixfsnode"
-	"github.com/ipld/go-car/v2"
 	carv2bs "github.com/ipld/go-car/v2/blockstore"
 	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
@@ -54,13 +53,6 @@ var bigCarParExchange pargraphsync.ParallelGraphExchange
 var bigCarAddrInfos []peer.AddrInfo
 
 const ServicesNum = 3
-
-func TestWrapV1File(t *testing.T) {
-	err := car.WrapV1File("./bafkreifehqnkqvw5nwrcj4rg5d3z6q6psspfgu6t52uztwehop63tfybzm.car", "./xx-car-v2.car")
-	if err != nil {
-		t.Fatal(err)
-	}
-}
 
 func TestMain(m *testing.M) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
