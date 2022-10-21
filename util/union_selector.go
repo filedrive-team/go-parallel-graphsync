@@ -25,20 +25,18 @@ func newTrieNode(segment string) *trieNode {
 }
 
 type trie struct {
-	root     *trieNode
-	isUnixfs bool
+	root *trieNode
 }
 
-func newTrie(isUnixfs bool) *trie {
+func newTrie() *trie {
 	root := newTrieNode("!")
 	return &trie{
-		root:     root,
-		isUnixfs: isUnixfs,
+		root: root,
 	}
 }
 
-func newTrieFromPath(paths []string, isUnixfs bool) *trie {
-	t := newTrie(isUnixfs)
+func newTrieFromPath(paths []string) *trie {
+	t := newTrie()
 	for _, path := range paths {
 		t.InsertPath(path)
 	}
@@ -70,16 +68,10 @@ func (t *trie) unionSelectorsFromTrieNode(nd *trieNode) builder.SelectorSpec {
 	switch len(nd.children) {
 	case 0:
 		selSpec, _ := textselector.SelectorSpecFromPath(LeftLinks, false, ssb.ExploreRecursiveEdge())
-		var selectorSpec builder.SelectorSpec
-		if t.isUnixfs {
-			selectorSpec = UnixFSPathSelectorSpec(nd.segment, ssb.ExploreRecursive(selector.RecursionLimitNone(), selSpec))
-		} else {
-			var err error
-			selectorSpec, err = textselector.SelectorSpecFromPath(textselector.Expression(nd.segment), false, ssb.ExploreRecursive(selector.RecursionLimitNone(), selSpec))
-			if err != nil {
-				panic(err)
-				return nil
-			}
+		selectorSpec, err := textselector.SelectorSpecFromPath(textselector.Expression(nd.segment), false, ssb.ExploreRecursive(selector.RecursionLimitNone(), selSpec))
+		if err != nil {
+			panic(err)
+			return nil
 		}
 		return selectorSpec
 	case 1:
@@ -139,19 +131,15 @@ func UnixFSPathSelectorSpec(path string, optionalSubselectorAtTarget builder.Sel
 	return selectorSoFar
 }
 
-func UnionPathSelector(paths []string, isUnixfs bool) (ipld.Node, error) {
+func UnionPathSelector(paths []string) (ipld.Node, error) {
 	if len(paths) < 1 {
 		return nil, fmt.Errorf("paths should not be nil")
 	}
 	if len(paths) == 1 {
-		if isUnixfs {
-			return UnixFSPathSelectorSpec(paths[0], nil).Node(), nil
-		} else {
-			selectorSpec, err := textselector.SelectorSpecFromPath(textselector.Expression(paths[0]), false, nil)
-			return selectorSpec.Node(), err
-		}
+		selectorSpec, err := textselector.SelectorSpecFromPath(textselector.Expression(paths[0]), false, nil)
+		return selectorSpec.Node(), err
 	}
-	trieTree := newTrieFromPath(paths, isUnixfs)
+	trieTree := newTrieFromPath(paths)
 	sel := trieTree.ToSelector()
 	if sel == nil {
 		return nil, fmt.Errorf("selector is nil")

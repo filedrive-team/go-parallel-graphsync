@@ -11,7 +11,7 @@ import (
 )
 
 func TestTrie_Walk(t *testing.T) {
-	trie := newTrie(false)
+	trie := newTrie()
 	var paths = []string{
 		"Links/0/Hash/Links/0/Hash",
 		"Links/0/Hash/Links/2/Hash",
@@ -24,7 +24,7 @@ func TestTrie_Walk(t *testing.T) {
 		t.Logf("name=%s", name)
 		return true
 	})
-	f, _ := UnionPathSelector(paths, false)
+	f, _ := UnionPathSelector(paths)
 	var s strings.Builder
 	dagjson.Encode(f, &s)
 	fmt.Printf("%+v\n", s.String())

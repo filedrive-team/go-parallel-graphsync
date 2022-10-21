@@ -150,7 +150,7 @@ func dividePath(paths []string, peerIds []peer.AddrInfo) Tasks {
 		if i == num-1 {
 			end = len(paths)
 		}
-		sel, err := UnionPathSelector(paths[start:end], false)
+		sel, err := UnionPathSelector(paths[start:end])
 		if err != nil {
 			continue
 		}
