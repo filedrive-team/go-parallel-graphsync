@@ -7,7 +7,6 @@ import (
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
 	"github.com/filedrive-team/go-parallel-graphsync/impl"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
-	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-blockservice"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
@@ -21,27 +20,24 @@ import (
 	files "github.com/ipfs/go-ipfs-files"
 	ipldformat "github.com/ipfs/go-ipld-format"
 	"github.com/ipfs/go-merkledag"
+	"github.com/ipfs/go-unixfs"
 	unixfile "github.com/ipfs/go-unixfs/file"
 	"github.com/ipfs/go-unixfs/importer/balanced"
 	ihelper "github.com/ipfs/go-unixfs/importer/helpers"
-	dagpb "github.com/ipld/go-codec-dagpb"
 	"github.com/ipld/go-ipld-prime/datamodel"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
 	"github.com/ipld/go-ipld-prime/traversal/selector"
 	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
-	selectorparse "github.com/ipld/go-ipld-prime/traversal/selector/parse"
-	textselector "github.com/ipld/go-ipld-selector-text-lite"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/peerstore"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
-	"github.com/multiformats/go-multiaddr"
+	"github.com/stretchr/testify/require"
 	"math/rand"
 	"os"
 	"path"
-	"strings"
 	"testing"
 	"time"
 )
@@ -49,111 +45,261 @@ import (
 func TestParallelGraphSync(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
-	const ServicesNum = 3
-	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum, true)
+
+	globalParExchange.UnregisterPersistenceOption("newLinkSys")
+	memds := datastore.NewMapDatastore()
+	membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
+	newlsys := storeutil.LinkSystemForBlockstore(membs)
+	if err := globalParExchange.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+		t.Fatal(err)
+	}
+
+	sel1, err := GenerateSubRangeSelector("Links/0/Hash", 0, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel2, err := GenerateSubRangeSelector("Links/0/Hash", 3, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel3, err := GenerateSubRangeSelector("Links/0/Hash", 7, 11)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	keyFile := path.Join(os.TempDir(), "gs-key")
+	sels := []datamodel.Node{
+		sel1,
+		sel2,
+		sel3,
+	}
+
+	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
+	for i := 0; i < len(sels); i++ {
+		params = append(params, pargraphsync.RequestParam{
+			PeerId:   globalAddrInfos[i].ID,
+			Root:     cidlink.Link{globalRoot},
+			Selector: sels[i],
+		})
+	}
+
+	reqFunc := func(params []pargraphsync.RequestParam) {
+		responseProgress, errors := globalParExchange.RequestMany(mainCtx, params)
+		go func() {
+			select {
+			case err := <-errors:
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+		}()
+
+		for blk := range responseProgress {
+			fmt.Printf("path=%s \n", blk.Path.String())
+			if nd, err := blk.Node.LookupByString("Links"); err == nil {
+				fmt.Printf("links=%d\n", nd.Length())
+			}
+		}
+	}
+
+	reqFunc(params[:1])
+	reqFunc(params[1:])
+
+	// restore to a file
+	if false {
+		rdag := merkledag.NewDAGService(blockservice.New(globalBs, offline.Exchange(globalBs)))
+		nd, err := rdag.Get(mainCtx, globalRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file, err := unixfile.NewUnixfsFile(mainCtx, rdag, nd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = NodeWriteTo(file, "./src")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkGraphSync(b *testing.B) {
+	mainCtx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
+	const ServicesNum = 3
+	servbs, rootCid := CreateRandomBytesBlockStore(mainCtx, 290*1024*1024)
+	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9110, servbs, false)
+	if err != nil {
+		b.Fatal(err)
+	}
+	keyFile := path.Join(os.TempDir(), "gscli-key")
 	ds := datastore.NewMapDatastore()
 	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
-	//dsPath := path.Join(os.TempDir(), "gs-ds")
-	//ds, err := levelds.NewDatastore(dsPath, nil)
-	//if err != nil {
-	//	t.Fatal(err)
-	//}
-	//bs := blockstore.NewBlockstore(ds)
 
-	host, gs, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9320", keyFile, bs)
+	host, gscli, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9120", keyFile, bs)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	gscli.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
+		//	fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
+		hookActions.UsePersistenceOption("newLinkSys")
+	})
+
+	sel1, err := GenerateSubRangeSelector("", 0, 100)
+	if err != nil {
+		b.Fatal(err)
+	}
+	sel2, err := GenerateSubRangeSelector("", 100, 200)
+	if err != nil {
+		b.Fatal(err)
+	}
+	sel3, err := GenerateSubRangeSelector("", 200, 300)
+	if err != nil {
+		b.Fatal(err)
+	}
+	sels := []datamodel.Node{
+		sel1,
+		sel2,
+		sel3,
+	}
+	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
+	for i := 0; i < ServicesNum; i++ {
+		host.Peerstore().AddAddr(addrInfos[i].ID, globalAddrInfos[i].Addrs[0], peerstore.PermanentAddrTTL)
+
+		params = append(params, pargraphsync.RequestParam{
+			PeerId:   addrInfos[i].ID,
+			Root:     cidlink.Link{rootCid},
+			Selector: sels[i],
+		})
+	}
+	b.Run("request to 3 service", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			b.StopTimer()
+			gscli.UnregisterPersistenceOption("newLinkSys")
+			memds := datastore.NewMapDatastore()
+			membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
+			newlsys := storeutil.LinkSystemForBlockstore(membs)
+			if err := gscli.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+				b.Fatal(err)
+			}
+			b.StartTimer()
+
+			ctx := context.Background()
+			responseProgress, errors := gscli.RequestMany(ctx, params)
+			go func() {
+				select {
+				case err := <-errors:
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+			}()
+			for range responseProgress {
+			}
+		}
+	})
+	b.Run("request to 1 service", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			b.StopTimer()
+			gscli.UnregisterPersistenceOption("newLinkSys")
+			memds := datastore.NewMapDatastore()
+			membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
+			newlsys := storeutil.LinkSystemForBlockstore(membs)
+			if err := gscli.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+				b.Fatal(err)
+			}
+			b.StartTimer()
+
+			ctx := context.Background()
+			sel, err := GenerateSubRangeSelector("", 0, 300)
+			if err != nil {
+				b.Fatal(err)
+			}
+			responseProgress, errors := gscli.Request(ctx, params[0].PeerId, params[0].Root, sel)
+			go func() {
+				select {
+				case err := <-errors:
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+			}()
+			for range responseProgress {
+			}
+			has, err := membs.Has(mainCtx, rootCid)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if !has {
+				b.Fatal("not pass")
+			}
+		}
+	})
+	has, err := bs.Has(mainCtx, rootCid)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if has {
+		b.Fatal("not pass")
+	}
+
+}
+
+func TestParallelGraphSyncExploreRecursiveLeftNode(t *testing.T) {
+	mainCtx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
+	const ServicesNum = 3
+	servbs, root := CreateTestBlockstore(mainCtx)
+	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9210, servbs, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Printf("requester peerId=%s\n", host.ID())
+	keyFile := path.Join(os.TempDir(), "gs-prakey")
+	ds := datastore.NewMapDatastore()
+	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
+
+	host, gs, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9220", keyFile, bs)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	gs.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
 		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
 	})
-	gs.RegisterIncomingResponseHook(func(p peer.ID, responseData graphsync.ResponseData, hookActions graphsync.IncomingResponseHookActions) {
-		reqId := responseData.RequestID().String()
-		status := responseData.Status().String()
-		fmt.Printf("RegisterIncomingResponseHook peer=%s response requestId=%s status=%s\n", p.String(), reqId, status)
-	})
-	gs.RegisterIncomingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.IncomingRequestHookActions) {
-		fmt.Printf("RegisterIncomingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterBlockSentListener(func(p peer.ID, request graphsync.RequestData, block graphsync.BlockData) {
-		fmt.Printf("RegisterBlockSentListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterCompletedResponseListener(func(p peer.ID, request graphsync.RequestData, status graphsync.ResponseStatusCode) {
-		fmt.Printf("RegisterCompletedResponseListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterIncomingRequestQueuedHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.RequestQueuedHookActions) {
-		fmt.Printf("RegisterIncomingRequestQueuedHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterNetworkErrorListener(func(p peer.ID, request graphsync.RequestData, err error) {
-		fmt.Printf("RegisterNetworkErrorListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterOutgoingBlockHook(func(p peer.ID, request graphsync.RequestData, block graphsync.BlockData, hookActions graphsync.OutgoingBlockHookActions) {
-		fmt.Printf("RegisterOutgoingBlockHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
-		fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	// uninitialized, is it a bug?
-	//gs.RegisterOutgoingRequestProcessingListener(func(p peer.ID, request graphsync.RequestData, inProgressRequestCount int) {
-	//	fmt.Printf("request requestId=%s\n", request.ID().String())
-	//})
-	memds := datastore.NewMapDatastore()
-	membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
-	newlsys := storeutil.LinkSystemForBlockstore(membs)
-	gs.RegisterPersistenceOption("newLinkSys", newlsys)
 
-	gs.RegisterReceiverNetworkErrorListener(func(p peer.ID, err error) {
-		fmt.Printf("RegisterReceiverNetworkErrorListener error=%s\n", err)
-	})
-	gs.RegisterRequestorCancelledListener(func(p peer.ID, request graphsync.RequestData) {
-		fmt.Printf("RegisterRequestorCancelledListener request requestId=%s\n", request.ID().String())
-	})
-	gs.RegisterRequestUpdatedHook(func(p peer.ID, request graphsync.RequestData, updateRequest graphsync.RequestData, hookActions graphsync.RequestUpdatedHookActions) {
-		fmt.Printf("RegisterRequestUpdatedHook request requestId=%s\n", request.ID().String())
-	})
-
-	// QmTTSVQrNxBvQDXevh3UvToezMw1XQ5hvTMCwpDc8SDnNT
-	// Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y
-	root, _ := cid.Parse("Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y")
-
-	sels := []datamodel.Node{
-		GenerateSelecter(0, 3),
-		GenerateSelecter(3, 7),
-		GenerateSelecter(7, 11),
+	selPath := "Links/0/Hash"
+	dal, err := util.GetDataSelector(&selPath, false)
+	if err != nil {
+		t.Fatal(err)
 	}
-
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	subsel := ssb.ExploreRecursive(selector.RecursionLimitNone(),
+		ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+			specBuilder.Insert("Links", ssb.ExploreUnion(
+				//ssb.ExploreRange(start, end, ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
+				ssb.ExploreIndex(0, ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
+			),
+			)
+		}))
+	dal, err = util.GenerateDataSelector(selPath, false, subsel)
+	sels := []datamodel.Node{
+		dal,
+	}
 	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
-	for i := 0; i < ServicesNum; i++ {
-		servKeyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key%d", i))
-		privKey, err := loadOrInitPeerKey(servKeyFile)
-		if err != nil {
-			t.Fatal(err)
-		}
-		peerId, err := peer.IDFromPrivateKey(privKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		addr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/127.0.0.1/tcp/931%d", i))
-		if err != nil {
-			t.Fatal(err)
-		}
-		host.Peerstore().AddAddr(peerId, addr, peerstore.PermanentAddrTTL)
+	for i := 0; i < len(sels); i++ {
+		host.Peerstore().AddAddr(addrInfos[i].ID, addrInfos[i].Addrs[0], peerstore.PermanentAddrTTL)
 
 		params = append(params, pargraphsync.RequestParam{
-			PeerId:   peerId,
+			PeerId:   addrInfos[i].ID,
 			Root:     cidlink.Link{root},
 			Selector: sels[i],
 		})
 	}
 
-	responseProgress, errors := gs.RequestMany(mainCtx, params)
+	ctx := context.Background()
+	responseProgress, errors := gs.RequestMany(ctx, params)
 	go func() {
 		select {
 		case err := <-errors:
@@ -162,9 +308,12 @@ func TestParallelGraphSync(t *testing.T) {
 			}
 		}
 	}()
-
 	for blk := range responseProgress {
 		fmt.Printf("path=%s \n", blk.Path.String())
+		if nd, err := blk.Node.LookupByString("Links"); err == nil {
+			fmt.Printf("links=%d\n", nd.Length())
+		}
+
 	}
 
 	// restore to a file
@@ -185,545 +334,83 @@ func TestParallelGraphSync(t *testing.T) {
 	}
 }
 
-func TestGraphSyncSelectorFromMulPath(t *testing.T) {
+func TestParallelGraphSyncControl(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 	const ServicesNum = 3
-	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum, true)
+	servbs, rootCid := CreateRandomBytesBlockStore(mainCtx, 300*1024*1024)
+	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9310, servbs, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	keyFile := path.Join(os.TempDir(), "gs-key")
+	keyFile := path.Join(os.TempDir(), "gs-prakey")
 	ds := datastore.NewMapDatastore()
 	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
-	//dsPath := path.Join(os.TempDir(), "gs-ds")
-	//ds, err := levelds.NewDatastore(dsPath, nil)
-	//if err != nil {
-	//	t.Fatal(err)
-	//}
-	//bs := blockstore.NewBlockstore(ds)
 
 	host, gs, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9320", keyFile, bs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Printf("requester peerId=%s\n", host.ID())
 
 	gs.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
+		groupReq := gs.GetGroupRequestBySubRequestId(responseData.RequestID())
+		require.NotNil(t, groupReq)
+		t.Logf("groupRequestID=%s subRequestID=%s", groupReq.GetGroupRequestID(), responseData.RequestID())
 		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
 	})
-	gs.RegisterIncomingResponseHook(func(p peer.ID, responseData graphsync.ResponseData, hookActions graphsync.IncomingResponseHookActions) {
-		reqId := responseData.RequestID().String()
-		status := responseData.Status().String()
-		fmt.Printf("RegisterIncomingResponseHook peer=%s response requestId=%s status=%s\n", p.String(), reqId, status)
-	})
-	gs.RegisterIncomingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.IncomingRequestHookActions) {
-		fmt.Printf("RegisterIncomingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterBlockSentListener(func(p peer.ID, request graphsync.RequestData, block graphsync.BlockData) {
-		fmt.Printf("RegisterBlockSentListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterCompletedResponseListener(func(p peer.ID, request graphsync.RequestData, status graphsync.ResponseStatusCode) {
-		fmt.Printf("RegisterCompletedResponseListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterIncomingRequestQueuedHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.RequestQueuedHookActions) {
-		fmt.Printf("RegisterIncomingRequestQueuedHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterNetworkErrorListener(func(p peer.ID, request graphsync.RequestData, err error) {
-		fmt.Printf("RegisterNetworkErrorListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterOutgoingBlockHook(func(p peer.ID, request graphsync.RequestData, block graphsync.BlockData, hookActions graphsync.OutgoingBlockHookActions) {
-		fmt.Printf("RegisterOutgoingBlockHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
-		fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	// uninitialized, is it a bug?
-	//gs.RegisterOutgoingRequestProcessingListener(func(p peer.ID, request graphsync.RequestData, inProgressRequestCount int) {
-	//	fmt.Printf("request requestId=%s\n", request.ID().String())
-	//})
-	memds := datastore.NewMapDatastore()
-	membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
-	newlsys := storeutil.LinkSystemForBlockstore(membs)
-	gs.RegisterPersistenceOption("newLinkSys", newlsys)
 
-	gs.RegisterReceiverNetworkErrorListener(func(p peer.ID, err error) {
-		fmt.Printf("RegisterReceiverNetworkErrorListener error=%s\n", err)
-	})
-	gs.RegisterRequestorCancelledListener(func(p peer.ID, request graphsync.RequestData) {
-		fmt.Printf("RegisterRequestorCancelledListener request requestId=%s\n", request.ID().String())
-	})
-	gs.RegisterRequestUpdatedHook(func(p peer.ID, request graphsync.RequestData, updateRequest graphsync.RequestData, hookActions graphsync.RequestUpdatedHookActions) {
-		fmt.Printf("RegisterRequestUpdatedHook request requestId=%s\n", request.ID().String())
-	})
-
-	// QmTTSVQrNxBvQDXevh3UvToezMw1XQ5hvTMCwpDc8SDnNT
-	// Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y
-	root, _ := cid.Parse("Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y")
-
-	sels := make([]datamodel.Node, 0)
-	selector1, err := util.SelectorSpecFromMulPath("Links/0/Hash/Links/2-4", true, nil)
+	sel1, err := GenerateSubRangeSelector("", 0, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	selector2, err := util.SelectorSpecFromMulPath("Links/0/Hash/Links/4-7", true, nil)
+	sel2, err := GenerateSubRangeSelector("", 100, 200)
 	if err != nil {
 		t.Fatal(err)
 	}
-	selector3, err := util.SelectorSpecFromMulPath("Links/0/Hash/Links/7-11", true, nil)
+	sel3, err := GenerateSubRangeSelector("", 200, 300)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sels = append(sels, selector1.Node())
-	sels = append(sels, selector2.Node())
-	sels = append(sels, selector3.Node())
-
-	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
-	for i := 0; i < ServicesNum; i++ {
-		servKeyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key%d", i))
-		privKey, err := loadOrInitPeerKey(servKeyFile)
-		if err != nil {
-			t.Fatal(err)
-		}
-		peerId, err := peer.IDFromPrivateKey(privKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		addr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/127.0.0.1/tcp/931%d", i))
-		if err != nil {
-			t.Fatal(err)
-		}
-		host.Peerstore().AddAddr(peerId, addr, peerstore.PermanentAddrTTL)
-
-		params = append(params, pargraphsync.RequestParam{
-			PeerId:   peerId,
-			Root:     cidlink.Link{root},
-			Selector: sels[i],
-		})
-	}
-
-	responseProgress, errors := gs.RequestMany(mainCtx, params)
-	go func() {
-		select {
-		case err := <-errors:
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-	}()
-
-	for blk := range responseProgress {
-		fmt.Printf("path=%s \n", blk.Path.String())
-	}
-}
-
-func BenchmarkGraphSync(b *testing.B) {
-	//b.SetParallelism(10)
-	mainCtx, cancel := context.WithCancel(context.TODO())
-	defer cancel()
-	const ServicesNum = 3
-	servbs, root := CreateRandomBytesBlockStore(mainCtx, 290*1024*1024)
-	err := startSomeGraphSyncServicesByBlockStore(&testing.T{}, mainCtx, ServicesNum, servbs, false)
-	if err != nil {
-		b.Fatal(err)
-	}
-	keyFile := path.Join(os.TempDir(), "gs-key")
-	ds := datastore.NewMapDatastore()
-	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
-
-	host, gs, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9320", keyFile, bs)
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	gs.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
-		//	fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-		hookActions.UsePersistenceOption("newLinkSys")
-	})
-
 	sels := []datamodel.Node{
-		GenerateSelecter(0, 100),
-		GenerateSelecter(100, 200),
-		GenerateSelecter(200, 300),
+		sel1,
+		sel2,
+		sel3,
 	}
 	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
-	for i := 0; i < ServicesNum; i++ {
-		servKeyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key%d", i))
-		privKey, err := loadOrInitPeerKey(servKeyFile)
-		if err != nil {
-			b.Fatal(err)
-		}
-		peerId, err := peer.IDFromPrivateKey(privKey)
-		if err != nil {
-			b.Fatal(err)
-		}
-		addr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/127.0.0.1/tcp/931%d", i))
-		if err != nil {
-			b.Fatal(err)
-		}
-		host.Peerstore().AddAddr(peerId, addr, peerstore.PermanentAddrTTL)
+	for i := 0; i < len(sels); i++ {
+		host.Peerstore().AddAddr(addrInfos[i].ID, addrInfos[i].Addrs[0], peerstore.PermanentAddrTTL)
 
 		params = append(params, pargraphsync.RequestParam{
-			PeerId:   peerId,
-			Root:     cidlink.Link{root},
-			Selector: sels[i],
-		})
-	}
-	b.Run("request to 3 service", func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			b.StopTimer()
-			gs.UnregisterPersistenceOption("newLinkSys")
-			memds := datastore.NewMapDatastore()
-			membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
-			newlsys := storeutil.LinkSystemForBlockstore(membs)
-			if err := gs.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
-				b.Fatal(err)
-			}
-			b.StartTimer()
-
-			ctx := context.Background()
-			responseProgress, errors := gs.RequestMany(ctx, params)
-			go func() {
-				select {
-				case err := <-errors:
-					if err != nil {
-						b.Fatal(err)
-					}
-				}
-			}()
-			for range responseProgress {
-			}
-		}
-	})
-	b.Run("request to 1 service", func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			b.StopTimer()
-			gs.UnregisterPersistenceOption("newLinkSys")
-			memds := datastore.NewMapDatastore()
-			membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
-			newlsys := storeutil.LinkSystemForBlockstore(membs)
-			if err := gs.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
-				b.Fatal(err)
-			}
-			b.StartTimer()
-
-			ctx := context.Background()
-			responseProgress, errors := gs.Request(ctx, params[0].PeerId, params[0].Root, GenerateSelecter(0, 300))
-			go func() {
-				select {
-				case err := <-errors:
-					if err != nil {
-						b.Fatal(err)
-					}
-				}
-			}()
-			for range responseProgress {
-			}
-			has, err := membs.Has(mainCtx, root)
-			if err != nil {
-				b.Fatal(err)
-			}
-			if !has {
-				b.Fatal("not pass")
-			}
-		}
-	})
-	has, err := bs.Has(mainCtx, root)
-	if err != nil {
-		b.Fatal(err)
-	}
-	if has {
-		b.Fatal("not pass")
-	}
-
-}
-
-func TestParallelGraphSyncDivideSelector(t *testing.T) {
-	mainCtx, cancel := context.WithCancel(context.TODO())
-	defer cancel()
-	const ServicesNum = 3
-	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	keyFile := path.Join(os.TempDir(), "gs-key")
-	ds := datastore.NewMapDatastore()
-	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
-	//dsPath := path.Join(os.TempDir(), "gs-ds")
-	//ds, err := levelds.NewDatastore(dsPath, nil)
-	//if err != nil {
-	//	t.Fatal(err)
-	//}
-	//bs := blockstore.NewBlockstore(ds)
-
-	host, gs, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9320", keyFile, bs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fmt.Printf("requester peerId=%s\n", host.ID())
-
-	gs.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
-		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
-	})
-	gs.RegisterIncomingResponseHook(func(p peer.ID, responseData graphsync.ResponseData, hookActions graphsync.IncomingResponseHookActions) {
-		reqId := responseData.RequestID().String()
-		status := responseData.Status().String()
-		fmt.Printf("RegisterIncomingResponseHook peer=%s response requestId=%s status=%s\n", p.String(), reqId, status)
-	})
-	gs.RegisterIncomingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.IncomingRequestHookActions) {
-		fmt.Printf("RegisterIncomingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterBlockSentListener(func(p peer.ID, request graphsync.RequestData, block graphsync.BlockData) {
-		fmt.Printf("RegisterBlockSentListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterCompletedResponseListener(func(p peer.ID, request graphsync.RequestData, status graphsync.ResponseStatusCode) {
-		fmt.Printf("RegisterCompletedResponseListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterIncomingRequestQueuedHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.RequestQueuedHookActions) {
-		fmt.Printf("RegisterIncomingRequestQueuedHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterNetworkErrorListener(func(p peer.ID, request graphsync.RequestData, err error) {
-		fmt.Printf("RegisterNetworkErrorListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterOutgoingBlockHook(func(p peer.ID, request graphsync.RequestData, block graphsync.BlockData, hookActions graphsync.OutgoingBlockHookActions) {
-		fmt.Printf("RegisterOutgoingBlockHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
-		fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	// uninitialized, is it a bug?
-	//gs.RegisterOutgoingRequestProcessingListener(func(p peer.ID, request graphsync.RequestData, inProgressRequestCount int) {
-	//	fmt.Printf("request requestId=%s\n", request.ID().String())
-	//})
-	memds := datastore.NewMapDatastore()
-	membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
-	newlsys := storeutil.LinkSystemForBlockstore(membs)
-	gs.RegisterPersistenceOption("newLinkSys", newlsys)
-
-	gs.RegisterReceiverNetworkErrorListener(func(p peer.ID, err error) {
-		fmt.Printf("RegisterReceiverNetworkErrorListener error=%s\n", err)
-	})
-	gs.RegisterRequestorCancelledListener(func(p peer.ID, request graphsync.RequestData) {
-		fmt.Printf("RegisterRequestorCancelledListener request requestId=%s\n", request.ID().String())
-	})
-	gs.RegisterRequestUpdatedHook(func(p peer.ID, request graphsync.RequestData, updateRequest graphsync.RequestData, hookActions graphsync.RequestUpdatedHookActions) {
-		fmt.Printf("RegisterRequestUpdatedHook request requestId=%s\n", request.ID().String())
-	})
-
-	// QmTTSVQrNxBvQDXevh3UvToezMw1XQ5hvTMCwpDc8SDnNT
-	// Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y
-	root, _ := cid.Parse("Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y")
-
-	// create a selector to traverse the whole tree
-	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
-	sel := ssb.ExploreRecursive(selector.RecursionLimitNone(),
-		ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
-			specBuilder.Insert("Links", ssb.ExploreRange(1, 11,
-				ssb.ExploreUnion(ssb.ExploreAll(ssb.ExploreRecursiveEdge()))))
-		})).Node()
-	sels, err := util.DivideMapSelector(sel, ServicesNum, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
-	for i := 0; i < ServicesNum; i++ {
-		servKeyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key%d", i))
-		privKey, err := loadOrInitPeerKey(servKeyFile)
-		if err != nil {
-			t.Fatal(err)
-		}
-		peerId, err := peer.IDFromPrivateKey(privKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		addr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/127.0.0.1/tcp/931%d", i))
-		if err != nil {
-			t.Fatal(err)
-		}
-		host.Peerstore().AddAddr(peerId, addr, peerstore.PermanentAddrTTL)
-
-		params = append(params, pargraphsync.RequestParam{
-			PeerId:   peerId,
-			Root:     cidlink.Link{root},
+			PeerId:   addrInfos[i].ID,
+			Root:     cidlink.Link{rootCid},
 			Selector: sels[i],
 		})
 	}
 
-	responseProgress, errors := gs.RequestMany(mainCtx, params)
+	groupRequestID := graphsync.NewRequestID()
+	cliCtx := context.WithValue(context.TODO(), pargraphsync.GroupRequestIDContextKey{}, groupRequestID)
+	responseProgress, errors := gs.RequestMany(cliCtx, params)
 	go func() {
-		select {
-		case err := <-errors:
-			if err != nil {
-				t.Fatal(err)
-			}
+		for err := range errors {
+			// Occasionally, a load Link error is encountered
+			t.Logf("rootCid=%s error=%v", rootCid, err)
 		}
 	}()
-
-	for blk := range responseProgress {
-		blk.Path.String()
-	}
-
-}
-
-func TestParallelGraphSyncWithoutRange(t *testing.T) {
-	mainCtx, cancel := context.WithCancel(context.TODO())
-	defer cancel()
-	const ServicesNum = 3
-	err := startSomeGraphSyncServices(t, mainCtx, ServicesNum, true)
+	time.Sleep(100 * time.Millisecond)
+	err = gs.Pause(cliCtx, groupRequestID)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	keyFile := path.Join(os.TempDir(), "gs-key")
-	ds := datastore.NewMapDatastore()
-	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
-	//dsPath := path.Join(os.TempDir(), "gs-ds")
-	//ds, err := levelds.NewDatastore(dsPath, nil)
-	//if err != nil {
-	//	t.Fatal(err)
-	//}
-	//bs := blockstore.NewBlockstore(ds)
-
-	host, gs, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9320", keyFile, bs)
+	time.Sleep(100 * time.Millisecond)
+	err = gs.Unpause(cliCtx, groupRequestID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Printf("requester peerId=%s\n", host.ID())
-
-	gs.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
-		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
-	})
-	gs.RegisterIncomingResponseHook(func(p peer.ID, responseData graphsync.ResponseData, hookActions graphsync.IncomingResponseHookActions) {
-		reqId := responseData.RequestID().String()
-		status := responseData.Status().String()
-		fmt.Printf("RegisterIncomingResponseHook peer=%s response requestId=%s status=%s\n", p.String(), reqId, status)
-	})
-	gs.RegisterIncomingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.IncomingRequestHookActions) {
-		fmt.Printf("RegisterIncomingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterBlockSentListener(func(p peer.ID, request graphsync.RequestData, block graphsync.BlockData) {
-		fmt.Printf("RegisterBlockSentListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterCompletedResponseListener(func(p peer.ID, request graphsync.RequestData, status graphsync.ResponseStatusCode) {
-		fmt.Printf("RegisterCompletedResponseListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterIncomingRequestQueuedHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.RequestQueuedHookActions) {
-		fmt.Printf("RegisterIncomingRequestQueuedHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterNetworkErrorListener(func(p peer.ID, request graphsync.RequestData, err error) {
-		fmt.Printf("RegisterNetworkErrorListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterOutgoingBlockHook(func(p peer.ID, request graphsync.RequestData, block graphsync.BlockData, hookActions graphsync.OutgoingBlockHookActions) {
-		fmt.Printf("RegisterOutgoingBlockHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	gs.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
-		fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-	})
-	// uninitialized, is it a bug?
-	//gs.RegisterOutgoingRequestProcessingListener(func(p peer.ID, request graphsync.RequestData, inProgressRequestCount int) {
-	//	fmt.Printf("request requestId=%s\n", request.ID().String())
-	//})
-	memds := datastore.NewMapDatastore()
-	membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
-	newlsys := storeutil.LinkSystemForBlockstore(membs)
-	gs.RegisterPersistenceOption("newLinkSys", newlsys)
-
-	gs.RegisterReceiverNetworkErrorListener(func(p peer.ID, err error) {
-		fmt.Printf("RegisterReceiverNetworkErrorListener error=%s\n", err)
-	})
-	gs.RegisterRequestorCancelledListener(func(p peer.ID, request graphsync.RequestData) {
-		fmt.Printf("RegisterRequestorCancelledListener request requestId=%s\n", request.ID().String())
-	})
-	gs.RegisterRequestUpdatedHook(func(p peer.ID, request graphsync.RequestData, updateRequest graphsync.RequestData, hookActions graphsync.RequestUpdatedHookActions) {
-		fmt.Printf("RegisterRequestUpdatedHook request requestId=%s\n", request.ID().String())
-	})
-
-	// QmTTSVQrNxBvQDXevh3UvToezMw1XQ5hvTMCwpDc8SDnNT
-	// Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y
-	root, _ := cid.Parse("Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y")
-
-	// create a selector to traverse the whole tree
-	//ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
-	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
-	peerIds := make([]peer.ID, 0, ServicesNum)
-	for i := 0; i < ServicesNum; i++ {
-		servKeyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key%d", i))
-		privKey, err := loadOrInitPeerKey(servKeyFile)
-		if err != nil {
-			t.Fatal(err)
-		}
-		peerId, err := peer.IDFromPrivateKey(privKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		addr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/127.0.0.1/tcp/931%d", i))
-		if err != nil {
-			t.Fatal(err)
-		}
-		peerIds = append(peerIds, peerId)
-		host.Peerstore().AddAddr(peerId, addr, peerstore.PermanentAddrTTL)
-	}
-
-	sel, err := textselector.SelectorSpecFromPath("Links/0/Hash/Links/0", true, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	responseProgressRoot, errorsRoot := gs.Request(context.TODO(), peerIds[0], cidlink.Link{root}, sel.Node())
-	go func() {
-		select {
-		case err := <-errorsRoot:
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-	}()
-	var linkNums int64 = -1
-	for blk := range responseProgressRoot {
-		var buf strings.Builder
-		dagpb.Encode(blk.Node, &buf)
-		fmt.Printf("path=%s \n", blk.Path.String())
-		//fmt.Println()
-		if blocks.NewBlock([]byte(buf.String())).Cid() != blocks.NewBlock([]byte("")).Cid() && blocks.NewBlock([]byte(buf.String())).Cid() != root {
-			//fmt.Printf(" aaaa:%v\n", blocks.NewBlock([]byte(buf.String())))
-			protobuf, err := merkledag.DecodeProtobuf([]byte(buf.String()))
-			if err != nil {
-				return
-			}
-			linkNums = int64(len(protobuf.Links()))
-		}
-	}
-	if linkNums == -1 {
-		t.Fatalf("linkNums is -1")
-	}
-	fmt.Printf("linkNums=%d\n", linkNums)
-	sels, err := util.DivideMapSelector(selectorparse.CommonSelector_ExploreAllRecursively, ServicesNum, linkNums)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < ServicesNum; i++ {
-		params = append(params, pargraphsync.RequestParam{
-			PeerId:   peerIds[i],
-			Root:     cidlink.Link{root},
-			Selector: sels[i],
-		})
-	}
-	responseProgress, errors := gs.RequestMany(mainCtx, params)
-	go func() {
-		select {
-		case err := <-errors:
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-	}()
-
 	for blk := range responseProgress {
 		fmt.Printf("path=%s \n", blk.Path.String())
+		if nd, err := blk.Node.LookupByString("Links"); err == nil {
+			fmt.Printf("links=%d\n", nd.Length())
+		}
 	}
 }
 
@@ -772,10 +459,11 @@ func CreateRandomBytesBlockStore(ctx context.Context, dataSize int) (blockstore.
 	// import to UnixFS
 	bufferedDS := ipldformat.NewBufferedDAG(ctx, dagService)
 
+	cidBuilder, _ := unixFSCidBuilder()
 	params := ihelper.DagBuilderParams{
 		Maxlinks:   1024,
 		RawLeaves:  true,
-		CidBuilder: nil,
+		CidBuilder: cidBuilder,
 		Dagserv:    bufferedDS,
 	}
 
@@ -791,12 +479,78 @@ func CreateRandomBytesBlockStore(ctx context.Context, dataSize int) (blockstore.
 	return bs, nd.Cid()
 }
 
-func GenerateSelecter(start, end int64) datamodel.Node {
+func GenerateSubRangeSelector(selPath string, start, end int64) (datamodel.Node, error) {
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
-	return ssb.ExploreRecursive(selector.RecursionLimitNone(),
-		ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
-			specBuilder.Insert("Links", ssb.ExploreUnion(ssb.ExploreRange(start, end,
+	subsel := ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+		specBuilder.Insert("Links", ssb.ExploreRange(start, end,
+			ssb.ExploreRecursive(selector.RecursionLimitNone(),
 				ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
-				ssb.ExploreIndex(0, ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())))))
-		})).Node()
+		))
+	})
+	return util.GenerateDataSelector(selPath, false, subsel)
+}
+
+//                                       O
+//                                       |
+//                                       O
+//                                   /   |   \
+//                                 /     |     \
+//                               O       O       O
+//                             / | \   / | \   / | \
+//                            O  O  O O  O  O O  O  O
+func CreateTestBlockstore(ctx context.Context) (blockstore.Blockstore, cid.Cid) {
+	ds := datastore.NewMapDatastore()
+	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
+	dagService := merkledag.NewDAGService(blockservice.New(bs, offline.Exchange(bs)))
+
+	list := make([]*merkledag.ProtoNode, 0, 9)
+	for i := 0; i < 9; i++ {
+		str := fmt.Sprintf("it's node%d ", i)
+		fileNd := merkledag.NodeWithData(unixfs.FilePBData([]byte(str), uint64(len(str))))
+		list = append(list, fileNd)
+	}
+	fileList := make([]*merkledag.ProtoNode, 0, 3)
+	for i := 0; i < 3; i++ {
+		nd := unixfs.EmptyFileNode()
+		links := make([]*ipldformat.Link, 0, 3)
+		for index := i * 3; index < i*3+3; index++ {
+			lk, err := ipldformat.MakeLink(list[index])
+			if err != nil {
+				panic(err)
+			}
+			links = append(links, lk)
+		}
+		nd.SetLinks(links)
+		fileList = append(fileList, nd)
+	}
+	dirNd := unixfs.EmptyDirNode()
+	links := make([]*ipldformat.Link, 0, 3)
+	for i := 0; i < 3; i++ {
+		lk, err := ipldformat.MakeLink(fileList[i])
+		if err != nil {
+			panic(err)
+		}
+		lk.Name = fmt.Sprintf("file%d", i)
+		links = append(links, lk)
+	}
+	dirNd.SetLinks(links)
+
+	rootNd := unixfs.EmptyDirNode()
+	lk, err := ipldformat.MakeLink(dirNd)
+	if err != nil {
+		panic(err)
+	}
+	lk.Name = "dir"
+	rootNd.SetLinks([]*ipldformat.Link{lk})
+
+	nds := make([]ipldformat.Node, 0, 20)
+	for _, nd := range list {
+		nds = append(nds, nd)
+	}
+	for _, nd := range fileList {
+		nds = append(nds, nd)
+	}
+	nds = append(nds, dirNd, rootNd)
+	dagService.AddMany(ctx, nds)
+	return bs, rootNd.Cid()
 }

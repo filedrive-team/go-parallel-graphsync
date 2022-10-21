@@ -4,11 +4,12 @@ import (
 	"context"
 	crand "crypto/rand"
 	"fmt"
+	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
 	"github.com/ipfs/go-blockservice"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-cidutil"
 	"github.com/ipfs/go-datastore"
-	"github.com/ipfs/go-datastore/sync"
+	dssync "github.com/ipfs/go-datastore/sync"
 	"github.com/ipfs/go-graphsync"
 	graphsyncImpl "github.com/ipfs/go-graphsync/impl"
 	gsnet "github.com/ipfs/go-graphsync/network"
@@ -18,6 +19,7 @@ import (
 	files "github.com/ipfs/go-ipfs-files"
 	"github.com/ipfs/go-merkledag"
 	unixfile "github.com/ipfs/go-unixfs/file"
+	"github.com/ipfs/go-unixfsnode"
 	carv2bs "github.com/ipld/go-car/v2/blockstore"
 	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
@@ -40,110 +42,113 @@ import (
 	"testing"
 )
 
-//func TestWrapV1File(t *testing.T) {
-//	err := car.WrapV1File("./car-v1.car", "./car-v2.car")
-//	if err != nil {
-//		t.Fatal(err)
-//	}
-//}
+var globalHost host.Host
+var globalParExchange pargraphsync.ParallelGraphExchange
+var globalAddrInfos []peer.AddrInfo
+var globalRoot cid.Cid
+var globalBs blockstore.Blockstore
 
-func TestGraphSync(t *testing.T) {
+var bigCarRootCid cid.Cid
+var bigCarParExchange pargraphsync.ParallelGraphExchange
+var bigCarAddrInfos []peer.AddrInfo
+
+const ServicesNum = 3
+
+func TestMain(m *testing.M) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
-	err := startSomeGraphSyncServices(t, mainCtx, 1, true)
+
+	addrInfos, err := startSomeGraphSyncServices(mainCtx, ServicesNum, 9010, false, "car-v2.car")
 	if err != nil {
-		t.Fatal(err)
+		panic(err)
 	}
+	globalAddrInfos = addrInfos
 
 	keyFile := path.Join(os.TempDir(), "gs-key")
 	ds := datastore.NewMapDatastore()
-	bs := blockstore.NewBlockstore(sync.MutexWrap(ds))
-	//dsPath := path.Join(os.TempDir(), "gs-ds")
-	//ds, err := levelds.NewDatastore(dsPath, nil)
-	//if err != nil {
-	//	t.Fatal(err)
-	//}
-	//bs := blockstore.NewBlockstore(ds)
+	globalBs = blockstore.NewBlockstore(dssync.MutexWrap(ds))
 
-	host, gs, err := startGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9320", keyFile, bs)
+	globalHost, globalParExchange, err = startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9020", keyFile, globalBs)
 	if err != nil {
-		t.Fatal(err)
+		panic(err)
 	}
-	fmt.Printf("requester peerId=%s\n", host.ID())
+	fmt.Printf("requester peerId=%s\n", globalHost.ID())
 
-	gs.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
+	globalParExchange.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
 		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
 	})
-	gs.RegisterIncomingResponseHook(func(p peer.ID, responseData graphsync.ResponseData, hookActions graphsync.IncomingResponseHookActions) {
+	globalParExchange.RegisterIncomingResponseHook(func(p peer.ID, responseData graphsync.ResponseData, hookActions graphsync.IncomingResponseHookActions) {
 		reqId := responseData.RequestID().String()
 		status := responseData.Status().String()
 		fmt.Printf("RegisterIncomingResponseHook peer=%s response requestId=%s status=%s\n", p.String(), reqId, status)
 	})
-	gs.RegisterIncomingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.IncomingRequestHookActions) {
+	globalParExchange.RegisterIncomingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.IncomingRequestHookActions) {
 		fmt.Printf("RegisterIncomingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
 	})
-	gs.RegisterBlockSentListener(func(p peer.ID, request graphsync.RequestData, block graphsync.BlockData) {
+	globalParExchange.RegisterBlockSentListener(func(p peer.ID, request graphsync.RequestData, block graphsync.BlockData) {
 		fmt.Printf("RegisterBlockSentListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
 	})
-	gs.RegisterCompletedResponseListener(func(p peer.ID, request graphsync.RequestData, status graphsync.ResponseStatusCode) {
+	globalParExchange.RegisterCompletedResponseListener(func(p peer.ID, request graphsync.RequestData, status graphsync.ResponseStatusCode) {
 		fmt.Printf("RegisterCompletedResponseListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
 	})
-	gs.RegisterIncomingRequestQueuedHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.RequestQueuedHookActions) {
+	globalParExchange.RegisterIncomingRequestQueuedHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.RequestQueuedHookActions) {
 		fmt.Printf("RegisterIncomingRequestQueuedHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
 	})
-	gs.RegisterNetworkErrorListener(func(p peer.ID, request graphsync.RequestData, err error) {
+	globalParExchange.RegisterNetworkErrorListener(func(p peer.ID, request graphsync.RequestData, err error) {
 		fmt.Printf("RegisterNetworkErrorListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
 	})
-	gs.RegisterOutgoingBlockHook(func(p peer.ID, request graphsync.RequestData, block graphsync.BlockData, hookActions graphsync.OutgoingBlockHookActions) {
+	globalParExchange.RegisterOutgoingBlockHook(func(p peer.ID, request graphsync.RequestData, block graphsync.BlockData, hookActions graphsync.OutgoingBlockHookActions) {
 		fmt.Printf("RegisterOutgoingBlockHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
 	})
-	gs.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
+	globalParExchange.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
 		fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
+		hookActions.UsePersistenceOption("newLinkSys")
 	})
-	// uninitialized, is it a bug?
-	//gs.RegisterOutgoingRequestProcessingListener(func(p peer.ID, request graphsync.RequestData, inProgressRequestCount int) {
+	//uninitialized, is it a bug?
+	//globalParExchange.RegisterOutgoingRequestProcessingListener(func(p peer.ID, request graphsync.RequestData, inProgressRequestCount int) {
 	//	fmt.Printf("request requestId=%s\n", request.ID().String())
 	//})
 	memds := datastore.NewMapDatastore()
-	membs := blockstore.NewBlockstore(sync.MutexWrap(memds))
+	membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
 	newlsys := storeutil.LinkSystemForBlockstore(membs)
-	gs.RegisterPersistenceOption("newLinkSys", newlsys)
+	globalParExchange.RegisterPersistenceOption("newLinkSys", newlsys)
 
-	gs.RegisterReceiverNetworkErrorListener(func(p peer.ID, err error) {
+	globalParExchange.RegisterReceiverNetworkErrorListener(func(p peer.ID, err error) {
 		fmt.Printf("RegisterReceiverNetworkErrorListener error=%s\n", err)
 	})
-	gs.RegisterRequestorCancelledListener(func(p peer.ID, request graphsync.RequestData) {
+	globalParExchange.RegisterRequestorCancelledListener(func(p peer.ID, request graphsync.RequestData) {
 		fmt.Printf("RegisterRequestorCancelledListener request requestId=%s\n", request.ID().String())
 	})
-	gs.RegisterRequestUpdatedHook(func(p peer.ID, request graphsync.RequestData, updateRequest graphsync.RequestData, hookActions graphsync.RequestUpdatedHookActions) {
+	globalParExchange.RegisterRequestUpdatedHook(func(p peer.ID, request graphsync.RequestData, updateRequest graphsync.RequestData, hookActions graphsync.RequestUpdatedHookActions) {
 		fmt.Printf("RegisterRequestUpdatedHook request requestId=%s\n", request.ID().String())
 	})
+	// QmTTSVQrNxBvQDXevh3UvToezMw1XQ5hvTMCwpDc8SDnNT
+	// Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y
+	globalRoot, _ = cid.Parse("Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y")
+	for _, addrInfo := range addrInfos {
+		globalHost.Peerstore().AddAddr(addrInfo.ID, addrInfo.Addrs[0], peerstore.PermanentAddrTTL)
+	}
+	bigCarRootCid, _ = cid.Parse("QmSvtt6abwrp3MybYqHHA4BdFjjuLBABXjLEVQKpMUfUU8")
+	bigCarParExchange, bigCarAddrInfos = startWithBigCar()
+	os.Exit(m.Run())
+}
 
+func TestGraphSync(t *testing.T) {
 	var responseProgress <-chan graphsync.ResponseProgress
 	var errors <-chan error
 
-	// QmTTSVQrNxBvQDXevh3UvToezMw1XQ5hvTMCwpDc8SDnNT
-	// Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y
-	root, _ := cid.Parse("Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y")
+	globalParExchange.UnregisterPersistenceOption("newLinkSys")
+	memds := datastore.NewMapDatastore()
+	membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
+	newlsys := storeutil.LinkSystemForBlockstore(membs)
+	if err := globalParExchange.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+		t.Fatal(err)
+	}
 
-	servKeyFile := path.Join(os.TempDir(), "gs-key0")
-	privKey, err := loadOrInitPeerKey(servKeyFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	peerId, err := peer.IDFromPrivateKey(privKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr, err := multiaddr.NewMultiaddr("/ip4/127.0.0.1/tcp/9310")
-	if err != nil {
-		t.Fatal(err)
-	}
-	host.Peerstore().AddAddr(peerId, addr, peerstore.PermanentAddrTTL)
 	// create a selector to traverse the whole tree
 	allSelector := selectorparse.CommonSelector_ExploreAllRecursively
 
-	responseProgress, errors = gs.Request(context.TODO(), peerId, cidlink.Link{root}, allSelector)
+	responseProgress, errors = globalParExchange.Request(context.TODO(), globalAddrInfos[0].ID, cidlink.Link{globalRoot}, allSelector)
 	go func() {
 		select {
 		case err := <-errors:
@@ -157,21 +162,63 @@ func TestGraphSync(t *testing.T) {
 		fmt.Printf("path=%s \n", blk.Path.String())
 	}
 
-	// restore to a file
-	if false {
-		rdag := merkledag.NewDAGService(blockservice.New(bs, offline.Exchange(bs)))
-		nd, err := rdag.Get(mainCtx, root)
-		if err != nil {
-			t.Fatal(err)
+}
+
+func TestUnixfsPathGraphSync(t *testing.T) {
+	// data from ipfs
+	serverbs, err := loadCarV2Blockstore("./QmREu6imfQ38NgCuSWMX5i9Vj9UATvF2CJfPoRu49p58iz.car")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, _ := cid.Parse("QmREu6imfQ38NgCuSWMX5i9Vj9UATvF2CJfPoRu49p58iz")
+	subRoot, _ := cid.Parse("QmTGrEttSZqV82rABfjc88iEGKXHzPvrRrtsH35Eu28AD2")
+	sel := unixfsnode.UnixFSPathSelector("1.jpg")
+	var s strings.Builder
+	dagjson.Encode(sel, &s)
+	t.Logf(s.String())
+	mainCtx := context.TODO()
+	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9135, serverbs, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyFile := path.Join(os.TempDir(), "gs-unixfs-key")
+	ds := datastore.NewMapDatastore()
+	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
+
+	host, gscli, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9140", keyFile, bs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	host.Peerstore().AddAddr(addrInfos[0].ID, addrInfos[0].Addrs[0], peerstore.PermanentAddrTTL)
+
+	responseProgress, errors := gscli.Request(mainCtx, addrInfos[0].ID, cidlink.Link{root}, sel)
+	go func() {
+		select {
+		case err := <-errors:
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
-		file, err := unixfile.NewUnixfsFile(mainCtx, rdag, nd)
-		if err != nil {
-			t.Fatal(err)
-		}
-		err = NodeWriteTo(file, "./src2")
-		if err != nil {
-			t.Fatal(err)
-		}
+	}()
+	for blk := range responseProgress {
+		t.Logf("path=%s links=%d\n", blk.Path.String(), blk.Node.Length())
+	}
+
+	rdag := merkledag.NewDAGService(blockservice.New(bs, offline.Exchange(bs)))
+	nd, err := rdag.Get(mainCtx, subRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := unixfile.NewUnixfsFile(mainCtx, rdag, nd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filePath := path.Join(t.TempDir(), "1.jpg")
+	t.Log(filePath)
+	err = NodeWriteTo(file, filePath)
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -242,16 +289,10 @@ func loadCarV2Blockstore(path string) (*carv2bs.ReadOnly, error) {
 	if err != nil {
 		return nil, xerrors.Errorf("failed to create carv2 read retrieval: %w", err)
 	}
-
 	return bs, nil
 }
 
-func startGraphSyncService(ctx context.Context, listenAddr string, keyFile string, bs blockstore.Blockstore, printLog bool) (graphsync.GraphExchange, error) {
-	peerkey, err := loadOrInitPeerKey(keyFile)
-	if err != nil {
-		return nil, err
-	}
-
+func startGraphSyncService(ctx context.Context, listenAddr string, peerkey crypto.PrivKey, bs blockstore.Blockstore, printLog bool) (graphsync.GraphExchange, error) {
 	cmgr, err := connmgr.NewConnManager(2000, 3000)
 	if err != nil {
 		return nil, err
@@ -268,7 +309,6 @@ func startGraphSyncService(ctx context.Context, listenAddr string, keyFile strin
 	if err != nil {
 		return nil, err
 	}
-
 	if printLog {
 		fmt.Printf("host multiAddrs: %v\n", host.Addrs())
 	}
@@ -322,7 +362,7 @@ func startGraphSyncService(ctx context.Context, listenAddr string, keyFile strin
 			fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
 		})
 		// not init, is it a bug?
-		//gs.RegisterOutgoingRequestProcessingListener(func(p peer.ID, request graphsync.RequestData, inProgressRequestCount int) {
+		//globalParExchange.RegisterOutgoingRequestProcessingListener(func(p peer.ID, request graphsync.RequestData, inProgressRequestCount int) {
 		//	fmt.Printf("request requestId=%s\n", request.ID().String())
 		//})
 		exchange.RegisterReceiverNetworkErrorListener(func(p peer.ID, err error) {
@@ -368,28 +408,45 @@ func startGraphSyncClient(ctx context.Context, listenAddr string, keyFile string
 	return host, exchange, nil
 }
 
-func startSomeGraphSyncServices(t *testing.T, ctx context.Context, number int, printLog bool) error {
-	bs, err := loadCarV2Blockstore("./car-v2.car")
+func startSomeGraphSyncServices(ctx context.Context, number int, portStart int, printLog bool, path string) ([]peer.AddrInfo, error) {
+	bs, err := loadCarV2Blockstore(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return startSomeGraphSyncServicesByBlockStore(t, ctx, number, bs, printLog)
+	return startSomeGraphSyncServicesByBlockStore(ctx, number, portStart, bs, printLog)
 }
 
-func startSomeGraphSyncServicesByBlockStore(t *testing.T, ctx context.Context, number int, bs blockstore.Blockstore, printLog bool) error {
+func startSomeGraphSyncServicesByBlockStore(ctx context.Context, number int, portStart int, bs blockstore.Blockstore, printLog bool) ([]peer.AddrInfo, error) {
+	var addrInfos []peer.AddrInfo
 	for i := 0; i < number; i++ {
+		keyFile := path.Join(os.TempDir(), fmt.Sprintf("globalParExchange-key%d", portStart+i))
+		peerkey, err := loadOrInitPeerKey(keyFile)
+		if err != nil {
+			return nil, err
+		}
+		peerId, err := peer.IDFromPrivateKey(peerkey)
+		if err != nil {
+			return nil, err
+		}
+		maddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", portStart+i))
+		if err != nil {
+			return nil, err
+		}
+		addrInfos = append(addrInfos, peer.AddrInfo{
+			ID:    peerId,
+			Addrs: []multiaddr.Multiaddr{maddr},
+		})
 		go func(i int) {
-			keyFile := path.Join(os.TempDir(), fmt.Sprintf("gs-key%d", i))
-			_, err := startGraphSyncService(ctx, fmt.Sprintf("/ip4/0.0.0.0/tcp/931%d", i), keyFile, bs, printLog)
+			_, err := startGraphSyncService(ctx, maddr.String(), peerkey, bs, printLog)
 			if err != nil {
-				t.Fatal(err)
+				panic(err)
 			}
 			select {
 			case <-ctx.Done():
 			}
 		}(i)
 	}
-	return nil
+	return addrInfos, nil
 }
 
 func NodeWriteTo(nd files.Node, fpath string) error {
