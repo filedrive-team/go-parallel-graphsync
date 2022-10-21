@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/ipfs/go-unixfsnode"
 	"github.com/ipld/go-ipld-prime/codec/dagjson"
+	"github.com/ipld/go-ipld-prime/datamodel"
 	textselector "github.com/ipld/go-ipld-selector-text-lite"
 	"strings"
 	"testing"
@@ -28,6 +29,7 @@ func TestTrie_Walk(t *testing.T) {
 	dagjson.Encode(f, &s)
 	fmt.Printf("%+v\n", s.String())
 }
+
 func TestCheckIfLinkSelector(t *testing.T) {
 	testCases := []struct {
 		name   string
@@ -69,51 +71,47 @@ func TestCheckIfLinkSelector(t *testing.T) {
 		})
 	}
 }
+
 func TestCheckIfUnixfsSelector(t *testing.T) {
+	sel1 := unixfsnode.UnixFSPathSelector("a/b/c")
+	sel2 := unixfsnode.UnixFSPathSelector("a/b/Links")
+	sel3 := unixfsnode.UnixFSPathSelector("Links/0/Links")
+	selspec, err := textselector.SelectorSpecFromPath("Links/0/Links", false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel4 := selspec.Node()
 	testCases := []struct {
 		name   string
-		path   string
+		sel    datamodel.Node
 		expect bool
 	}{
 		{
 			name:   "Unix",
-			path:   "a/b/c",
+			sel:    sel1,
 			expect: true,
 		},
 		{
 			name:   "Unix",
-			path:   "a/b/Links",
+			sel:    sel2,
 			expect: true,
 		},
 		{
-			name:   "True-Unix",
-			path:   "Links/0/Links",
+			name:   "Unix",
+			sel:    sel3,
 			expect: true,
 		},
 		{
-			name:   "Err-Unix",
-			path:   "Links/0/Links",
+			name:   "Not-Unix",
+			sel:    sel4,
 			expect: false,
 		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.expect {
-				sel1 := unixfsnode.UnixFSPathSelector(tc.path)
-
-				if CheckIfUnixfsSelector(sel1) != tc.expect {
-					t.Fatalf("expect %v,but %v", tc.expect, !tc.expect)
-				}
-			} else {
-				sel1, err := textselector.SelectorSpecFromPath(textselector.Expression(tc.path), false, nil)
-				if err != nil {
-					return
-				}
-				if CheckIfUnixfsSelector(sel1.Node()) != tc.expect {
-					t.Fatalf("expect %v,but %v", tc.expect, !tc.expect)
-				}
+			if CheckIfUnixfsSelector(tc.sel) != tc.expect {
+				t.Fatalf("expect %v,but %v", tc.expect, !tc.expect)
 			}
-
 		})
 	}
 }
