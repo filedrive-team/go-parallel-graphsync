@@ -5,7 +5,7 @@ import (
 	"fmt"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
-	"github.com/filedrive-team/go-parallel-graphsync/util/explore"
+	"github.com/filedrive-team/go-parallel-graphsync/util/parseselector"
 	"github.com/ipfs/go-graphsync"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
@@ -14,7 +14,6 @@ import (
 	textselector "github.com/ipld/go-ipld-selector-text-lite"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/peerstore"
-	"math"
 	"os"
 	"path"
 	"strings"
@@ -235,7 +234,7 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			edge, nedge, err := explore.GenerateSelectors(tc.selRes.Node())
+			edge, nedge, err := parseselector.GenerateSelectors(tc.selRes.Node())
 			if err != nil {
 				return
 			}
@@ -301,8 +300,4 @@ func compare(doneTasks map[string]struct{}, paths2 []string) bool {
 		}
 	}
 	return true
-}
-func TestName(t *testing.T) {
-	fmt.Println(math.Ceil(float64(3) / 4))
-
 }

@@ -5,6 +5,7 @@ import (
 	crand "crypto/rand"
 	"fmt"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
+	"github.com/ipfs/go-blockservice"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-cidutil"
 	"github.com/ipfs/go-datastore"
@@ -14,8 +15,11 @@ import (
 	gsnet "github.com/ipfs/go-graphsync/network"
 	"github.com/ipfs/go-graphsync/storeutil"
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
+	offline "github.com/ipfs/go-ipfs-exchange-offline"
 	files "github.com/ipfs/go-ipfs-files"
 	"github.com/ipfs/go-merkledag"
+	unixfile "github.com/ipfs/go-unixfs/file"
+	"github.com/ipfs/go-unixfsnode"
 	carv2bs "github.com/ipld/go-car/v2/blockstore"
 	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
@@ -49,13 +53,6 @@ var bigCarParExchange pargraphsync.ParallelGraphExchange
 var bigCarAddrInfos []peer.AddrInfo
 
 const ServicesNum = 3
-
-//func TestWrapV1File(t *testing.T) {
-//	err := car.WrapV1File("./car-v1.car", "./car-v2.car")
-//	if err != nil {
-//		t.Fatal(err)
-//	}
-//}
 
 func TestMain(m *testing.M) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
@@ -165,6 +162,64 @@ func TestGraphSync(t *testing.T) {
 		fmt.Printf("path=%s \n", blk.Path.String())
 	}
 
+}
+
+func TestUnixfsPathGraphSync(t *testing.T) {
+	// data from ipfs
+	serverbs, err := loadCarV2Blockstore("./QmREu6imfQ38NgCuSWMX5i9Vj9UATvF2CJfPoRu49p58iz.car")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, _ := cid.Parse("QmREu6imfQ38NgCuSWMX5i9Vj9UATvF2CJfPoRu49p58iz")
+	subRoot, _ := cid.Parse("QmTGrEttSZqV82rABfjc88iEGKXHzPvrRrtsH35Eu28AD2")
+	sel := unixfsnode.UnixFSPathSelector("1.jpg")
+	var s strings.Builder
+	dagjson.Encode(sel, &s)
+	t.Logf(s.String())
+	mainCtx := context.TODO()
+	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9135, serverbs, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyFile := path.Join(os.TempDir(), "gs-unixfs-key")
+	ds := datastore.NewMapDatastore()
+	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
+
+	host, gscli, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9140", keyFile, bs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	host.Peerstore().AddAddr(addrInfos[0].ID, addrInfos[0].Addrs[0], peerstore.PermanentAddrTTL)
+
+	responseProgress, errors := gscli.Request(mainCtx, addrInfos[0].ID, cidlink.Link{root}, sel)
+	go func() {
+		select {
+		case err := <-errors:
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}()
+	for blk := range responseProgress {
+		t.Logf("path=%s links=%d\n", blk.Path.String(), blk.Node.Length())
+	}
+
+	rdag := merkledag.NewDAGService(blockservice.New(bs, offline.Exchange(bs)))
+	nd, err := rdag.Get(mainCtx, subRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := unixfile.NewUnixfsFile(mainCtx, rdag, nd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filePath := path.Join(t.TempDir(), "1.jpg")
+	t.Log(filePath)
+	err = NodeWriteTo(file, filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func loadOrInitPeerKey(kf string) (crypto.PrivKey, error) {

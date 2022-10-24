@@ -1,4 +1,4 @@
-package explore
+package parseselector
 
 import (
 	"fmt"
