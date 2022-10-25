@@ -162,6 +162,19 @@ func (s ExploreRecursive) Match(node datamodel.Node) (datamodel.Node, error) {
 type exploreRecursiveContext struct {
 	path       string
 	edgesFound int
+	rp         rangePath
+	indexP     indexPath
+}
+type rangePath struct {
+	path        string
+	isRangePath bool
+	start       int64
+	end         int64
+}
+type indexPath struct {
+	path    string
+	isIndex bool
+	index   int64
 }
 
 func (erc *exploreRecursiveContext) Link(s selector.Selector) bool {

@@ -7,6 +7,7 @@ import (
 	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/filedrive-team/go-parallel-graphsync/util/parseselector"
 	"github.com/ipfs/go-graphsync"
+	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
 	"github.com/ipld/go-ipld-prime/traversal/selector"
@@ -175,6 +176,11 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 	selmore3, _ := textselector.SelectorSpecFromPath("/4/Hash/Links/1/Hash", false, all)
 	selMore, _ := textselector.SelectorSpecFromPath("Links", false, ssb.ExploreUnion(selmore1, selmore2, selmore3, fromPath4))
 
+	selRange := ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+		specBuilder.Insert("Links", ssb.ExploreRange(1, 4,
+			ssb.ExploreIndex(0, ssb.Matcher())))
+	})
+
 	testCases := []struct {
 		name     string
 		selRes   builder.SelectorSpec
@@ -231,10 +237,27 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 				"QmYFfDQ4PXSi5jb1Vci62Tt98rsHDNDkEWc69x1CUVbpr2",
 			},
 		},
+		{
+			name:   "range",
+			selRes: selRange,
+			resPaths: []string{"Links/0/Hash",
+				"Links/1/Hash",
+				"Links/2/Hash",
+				"Links/3/Hash",
+			},
+			cids: []string{"QmX6WsRCk9ANtHasCWbMDuSWJQg7bhTaYV4Qp7sjnC89vR",
+				"QmYFfDQ4PXSi5jb1Vci62Tt98rsHDNDkEWc69x1CUVbpr2",
+				"QmRoq4iMc92NhXyg1ei3f1CpQTg9pGEhnDjrr89ytFcjdi",
+				"QmTf25Um3uU26DcTBjYkZBYFUt3oRNAXHMnbnTcDc46Lfr",
+			},
+		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			edge, nedge, err := parseselector.GenerateSelectors(tc.selRes.Node())
+			var sss strings.Builder
+			dagjson.Encode(tc.selRes.Node(), &sss)
+			fmt.Println(sss.String())
+			edge, nedge, rn, in, err := parseselector.GenerateSelectors(tc.selRes.Node())
 			if err != nil {
 				return
 			}
@@ -258,6 +281,44 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 				}
 			}
 			for _, ne := range edge {
+				responseProgress, errors := bigCarParExchange.Request(context.TODO(), bigCarAddrInfos[0].ID, cidlink.Link{Cid: bigCarRootCid}, ne)
+				go func() {
+					select {
+					case err := <-errors:
+						if err != nil {
+							t.Fatal(err)
+						}
+					}
+				}()
+
+				for blk := range responseProgress {
+
+					if strings.HasSuffix(blk.Path.String(), "Hash") && blk.LastBlock.Link != nil {
+						//fmt.Printf("edge path=%s:%s \n", blk.Path.String(), blk.LastBlock.Link.String())
+						cids = append(cids, blk.LastBlock.Link.String())
+					}
+				}
+			}
+			for _, ne := range rn {
+				responseProgress, errors := bigCarParExchange.Request(context.TODO(), bigCarAddrInfos[0].ID, cidlink.Link{Cid: bigCarRootCid}, ne)
+				go func() {
+					select {
+					case err := <-errors:
+						if err != nil {
+							t.Fatal(err)
+						}
+					}
+				}()
+
+				for blk := range responseProgress {
+
+					if strings.HasSuffix(blk.Path.String(), "Hash") && blk.LastBlock.Link != nil {
+						//fmt.Printf("edge path=%s:%s \n", blk.Path.String(), blk.LastBlock.Link.String())
+						cids = append(cids, blk.LastBlock.Link.String())
+					}
+				}
+			}
+			for _, ne := range in {
 				responseProgress, errors := bigCarParExchange.Request(context.TODO(), bigCarAddrInfos[0].ID, cidlink.Link{Cid: bigCarRootCid}, ne)
 				go func() {
 					select {

@@ -59,35 +59,45 @@ func (t *trie) InsertPath(path string) {
 	node.isEnding = true
 }
 
-func (t *trie) ToSelector() builder.SelectorSpec {
-	return t.unionSelectorsFromTrieNode(t.root)
+func (t *trie) ToSelector(isLeft bool) builder.SelectorSpec {
+	return t.unionSelectorsFromTrieNode(t.root, isLeft)
 }
 
-func (t *trie) unionSelectorsFromTrieNode(nd *trieNode) builder.SelectorSpec {
+func (t *trie) unionSelectorsFromTrieNode(nd *trieNode, isLeft bool) builder.SelectorSpec {
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
 	switch len(nd.children) {
 	case 0:
-		selSpec, _ := textselector.SelectorSpecFromPath(LeftLinks, false, ssb.ExploreRecursiveEdge())
-		selectorSpec, err := textselector.SelectorSpecFromPath(textselector.Expression(nd.segment), false, ssb.ExploreRecursive(selector.RecursionLimitNone(), selSpec))
-		if err != nil {
-			panic(err)
-			return nil
+		if isLeft {
+			selSpec, _ := textselector.SelectorSpecFromPath(LeftLinks, false, ssb.ExploreRecursiveEdge())
+			selectorSpec, err := textselector.SelectorSpecFromPath(textselector.Expression(nd.segment), false, ssb.ExploreRecursive(selector.RecursionLimitNone(), selSpec))
+			if err != nil {
+				panic(err)
+				return nil
+			}
+			return selectorSpec
+		} else {
+			selectorSpec, err := textselector.SelectorSpecFromPath(textselector.Expression(nd.segment), false, nil)
+			if err != nil {
+				panic(err)
+				return nil
+			}
+			return selectorSpec
 		}
-		return selectorSpec
+
 	case 1:
 		for _, v := range nd.children {
 			if nd.segment != "!" {
 				return ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
-					specBuilder.Insert(nd.segment, t.unionSelectorsFromTrieNode(v))
+					specBuilder.Insert(nd.segment, t.unionSelectorsFromTrieNode(v, isLeft))
 				})
 			} else {
-				return t.unionSelectorsFromTrieNode(v)
+				return t.unionSelectorsFromTrieNode(v, isLeft)
 			}
 		}
 	default:
 		var specs []builder.SelectorSpec
 		for _, v := range nd.children {
-			specs = append(specs, t.unionSelectorsFromTrieNode(v))
+			specs = append(specs, t.unionSelectorsFromTrieNode(v, isLeft))
 		}
 		return ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
 			specBuilder.Insert(nd.segment, ssb.ExploreUnion(specs...))
@@ -131,7 +141,7 @@ func UnixFSPathSelectorSpec(path string, optionalSubselectorAtTarget builder.Sel
 	return selectorSoFar
 }
 
-func UnionPathSelector(paths []string) (ipld.Node, error) {
+func UnionPathSelector(paths []string, isLeft bool) (ipld.Node, error) {
 	if len(paths) < 1 {
 		return nil, fmt.Errorf("paths should not be nil")
 	}
@@ -140,7 +150,7 @@ func UnionPathSelector(paths []string) (ipld.Node, error) {
 		return selectorSpec.Node(), err
 	}
 	trieTree := newTrieFromPath(paths)
-	sel := trieTree.ToSelector()
+	sel := trieTree.ToSelector(isLeft)
 	if sel == nil {
 		return nil, fmt.Errorf("selector is nil")
 	}

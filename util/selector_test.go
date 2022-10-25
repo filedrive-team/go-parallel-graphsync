@@ -24,7 +24,7 @@ func TestTrie_Walk(t *testing.T) {
 		t.Logf("name=%s", name)
 		return true
 	})
-	f, _ := UnionPathSelector(paths)
+	f, _ := UnionPathSelector(paths, true)
 	var s strings.Builder
 	dagjson.Encode(f, &s)
 	fmt.Printf("%+v\n", s.String())
