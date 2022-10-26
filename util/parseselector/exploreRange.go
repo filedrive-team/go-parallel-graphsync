@@ -92,7 +92,7 @@ func (er *ERContext) ParseExploreRange(n datamodel.Node) (selector.Selector, err
 		x.interest = append(x.interest, datamodel.PathSegmentOfInt(i))
 	}
 	er.collectPath(&exploreRecursiveContext{rp: rangePath{
-		path:        newPath(er.ePc.path),
+		path:        newPathFromPathSegments(er.ePc.pathSegment),
 		isRangePath: true,
 		start:       startValue,
 		end:         endValue,

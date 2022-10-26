@@ -2,7 +2,6 @@ package parseselector
 
 import (
 	"fmt"
-	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/ipld/go-ipld-prime"
 	"github.com/ipld/go-ipld-prime/traversal/selector"
 	textselector "github.com/ipld/go-ipld-selector-text-lite"
@@ -13,8 +12,8 @@ import (
 )
 
 type ERParseContext struct {
-	selPc selector.ParseContext
-	path  []string
+	selPc       selector.ParseContext
+	pathSegment []string
 }
 
 type ERContext struct {
@@ -48,7 +47,7 @@ func (er *ERContext) ParseSelector(n datamodel.Node) (selector.Selector, error) 
 	case selector.SelectorKey_ExploreRange:
 		return er.ParseExploreRange(v)
 	case selector.SelectorKey_ExploreUnion:
-		er.union = er.ePc.path
+		er.union = er.ePc.pathSegment
 		//fmt.Println("|||", er.pc.path)
 		return er.ParseExploreUnion(v)
 	case selector.SelectorKey_ExploreRecursive:
@@ -78,10 +77,10 @@ func (c *ERParseContext) PushParent(parent selector.ParsedParent) *ERContext {
 
 // PushLinks puts a parent onto the stack of parents for a parse context
 func (c *ERParseContext) PushLinks(l string) {
-	c.path = append(c.path, l)
+	c.pathSegment = append(c.pathSegment, l)
 }
 func (er *ERContext) collectPath(erc *exploreRecursiveContext) {
-	erc.path = newPath(er.ePc.path)
+	erc.path = newPathFromPathSegments(er.ePc.pathSegment)
 	//ectx = append(ectx, erc)
 	if strings.HasSuffix(erc.path, "Hash") {
 		er.eCtx = append(er.eCtx, erc)
@@ -93,7 +92,7 @@ func (er *ERContext) collectPath(erc *exploreRecursiveContext) {
 		er.eCtx = append(er.eCtx, erc)
 	}
 }
-func newPath(paths []string) string {
+func newPathFromPathSegments(paths []string) string {
 	var ps []datamodel.PathSegment
 	for _, p := range paths {
 		ps = append(ps, datamodel.PathSegmentOfString(p))
@@ -117,28 +116,30 @@ func GenerateSelectors(sel ipld.Node) (edge, nedge []ipld.Node, rn []ipld.Node, 
 	rn, in = generateRangeIndex(er.eCtx)
 	return edge, nedge, rn, in, nil
 }
-func generateRangeIndex(erc []*exploreRecursiveContext) (rn []ipld.Node, in []ipld.Node) {
+
+// todo The case of range for each node is too complicated and may need to be implemented later or implemented in another way
+func generateRangeIndex(erc []*exploreRecursiveContext) (rangeNode []ipld.Node, indexNode []ipld.Node) {
 	for _, er := range erc {
 		if er.indexP.isIndex {
 			selSpec, err := textselector.SelectorSpecFromPath(textselector.Expression(er.indexP.path+"/"+strconv.Itoa(int(er.indexP.index))+"/Hash"), false, nil)
+			//todo if err return or continue
 			if err != nil {
 				return nil, nil
 			}
-			rn = append(rn, selSpec.Node())
+			indexNode = append(indexNode, selSpec.Node())
 		}
-		var pats []string
 		if er.rp.isRangePath {
 			for i := er.rp.start; i < er.rp.end; i++ {
-				pats = append(pats, er.rp.path+"/"+strconv.Itoa(int(i))+"/Hash")
+				selSpec, err := textselector.SelectorSpecFromPath(textselector.Expression(er.rp.path+"/"+strconv.Itoa(int(i))+"/Hash"), false, nil)
+				//todo if err return or continue
+				if err != nil {
+					return nil, nil
+				}
+				rangeNode = append(rangeNode, selSpec.Node())
 			}
-			pathSelector, err := util.UnionPathSelector(pats, false)
-			if err != nil {
-				return rn, in
-			}
-			in = append(in, pathSelector)
 		}
 	}
-	return rn, in
+	return rangeNode, indexNode
 }
 
 // ParseMatcher assembles a Selector
@@ -173,8 +174,8 @@ func (er *ERContext) ParseExploreUnion(n datamodel.Node) (selector.Selector, err
 			return nil, err
 		}
 		//clear store path
-		er.ePc.path = nil
-		er.ePc.path = append(er.ePc.path, pa...)
+		er.ePc.pathSegment = nil
+		er.ePc.pathSegment = append(er.ePc.pathSegment, pa...)
 		x.Members = append(x.Members, member)
 	}
 	return x, nil

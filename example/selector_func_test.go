@@ -7,6 +7,7 @@ import (
 	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/filedrive-team/go-parallel-graphsync/util/parseselector"
 	"github.com/ipfs/go-graphsync"
+	"github.com/ipld/go-ipld-prime"
 	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
@@ -176,20 +177,20 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 	selmore3, _ := textselector.SelectorSpecFromPath("/4/Hash/Links/1/Hash", false, all)
 	selMore, _ := textselector.SelectorSpecFromPath("Links", false, ssb.ExploreUnion(selmore1, selmore2, selmore3, fromPath4))
 
-	selRange := ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+	selRange1 := ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
 		specBuilder.Insert("Links", ssb.ExploreRange(1, 4,
 			ssb.ExploreIndex(0, ssb.Matcher())))
-	})
-
+	}).Node()
+	selRange2, _ := GenerateSubRangeSelector("Links/0/Hash", 1, 4)
 	testCases := []struct {
 		name     string
-		selRes   builder.SelectorSpec
+		selRes   ipld.Node
 		resPaths []string
 		cids     []string
 	}{
 		{
 			name:   "same-depth",
-			selRes: selSameDepth,
+			selRes: selSameDepth.Node(),
 			resPaths: []string{"Links/0/Hash",
 				"Links/1/Hash",
 			},
@@ -199,7 +200,7 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 		},
 		{
 			name:   "diff-depth",
-			selRes: selDiffDepth,
+			selRes: selDiffDepth.Node(),
 			resPaths: []string{"Links/0/Hash/Links/0/Hash",
 				"Links/3/Hash",
 			},
@@ -209,7 +210,7 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 		},
 		{
 			name:   "diff-depth & same-path",
-			selRes: selDiffSamePath,
+			selRes: selDiffSamePath.Node(),
 			resPaths: []string{"Links/0/Hash/Links/0/Hash",
 				"Links/0/Hash/Links/1/Hash",
 				"Links/3/Hash",
@@ -221,7 +222,7 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 		},
 		{
 			name:   "more",
-			selRes: selMore,
+			selRes: selMore.Node(),
 			resPaths: []string{"Links/0/Hash/Links/0/Hash",
 				"Links/0/Hash/Links/1/Hash",
 				"Links/0/Hash/Links/2/Hash",
@@ -238,8 +239,8 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 			},
 		},
 		{
-			name:   "range",
-			selRes: selRange,
+			name:   "range&index",
+			selRes: selRange1,
 			resPaths: []string{"Links/0/Hash",
 				"Links/1/Hash",
 				"Links/2/Hash",
@@ -251,13 +252,26 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 				"QmTf25Um3uU26DcTBjYkZBYFUt3oRNAXHMnbnTcDc46Lfr",
 			},
 		},
+		{
+			name:   "range",
+			selRes: selRange2,
+			resPaths: []string{"Links/0/Hash/Links/1/Hash",
+				"Links/0/Hash/Links/2/Hash",
+				"Links/0/Hash/Links/3/Hash",
+			},
+			cids: []string{
+				"Qme3ANCDLAvasvCQDWH2QUD62EHHBi5mtSwdsycsJQNSiM",
+				"QmRkRCHHLghBYFPNxEX4CBgL8wfjtpMGXgwfmQb8WN2Y4o",
+				"QmW7SsibBcHkkeVGHzbFbhE8bacn1RpC69zvRBPrnR28wj",
+			},
+		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			var sss strings.Builder
-			dagjson.Encode(tc.selRes.Node(), &sss)
+			dagjson.Encode(tc.selRes, &sss)
 			fmt.Println(sss.String())
-			edge, nedge, rn, in, err := parseselector.GenerateSelectors(tc.selRes.Node())
+			edge, nedge, rn, in, err := parseselector.GenerateSelectors(tc.selRes)
 			if err != nil {
 				return
 			}
@@ -313,7 +327,7 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 				for blk := range responseProgress {
 
 					if strings.HasSuffix(blk.Path.String(), "Hash") && blk.LastBlock.Link != nil {
-						//fmt.Printf("edge path=%s:%s \n", blk.Path.String(), blk.LastBlock.Link.String())
+						fmt.Printf("range path=%s:%s \n", blk.Path.String(), blk.LastBlock.Link.String())
 						cids = append(cids, blk.LastBlock.Link.String())
 					}
 				}
@@ -332,7 +346,7 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 				for blk := range responseProgress {
 
 					if strings.HasSuffix(blk.Path.String(), "Hash") && blk.LastBlock.Link != nil {
-						//fmt.Printf("edge path=%s:%s \n", blk.Path.String(), blk.LastBlock.Link.String())
+						fmt.Printf("index path=%s:%s \n", blk.Path.String(), blk.LastBlock.Link.String())
 						cids = append(cids, blk.LastBlock.Link.String())
 					}
 				}

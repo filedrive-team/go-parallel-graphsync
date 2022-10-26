@@ -66,7 +66,7 @@ func (er *ERContext) ParseExploreIndex(n datamodel.Node) (selector.Selector, err
 		return nil, err
 	}
 	er.collectPath(&exploreRecursiveContext{indexP: indexPath{
-		path:    newPath(er.ePc.path),
+		path:    newPathFromPathSegments(er.ePc.pathSegment),
 		isIndex: true,
 		index:   indexValue,
 	}})
