@@ -19,7 +19,7 @@ func unionPathSelector(this js.Value, args []js.Value) interface{} {
 		input = append(input, a.String())
 	}
 	fmt.Printf("input %s\n", input)
-	node, err := util.UnionPathSelector(input)
+	node, err := util.UnionPathSelector(input, false)
 	if err != nil {
 		fmt.Printf("unable to union path to selector %s\n", err)
 		return err.Error()
@@ -33,21 +33,19 @@ func parseComplexSelectors(this js.Value, args []js.Value) interface{} {
 
 	fmt.Printf("input %s\n", args[0].String())
 	node, err := selectorparse.ParseJSONSelector(args[0].String())
-	edge, nedge, err := parseselector.GenerateSelectors(node)
+	parseSelectors, err := parseselector.GenerateSelectors(node)
 	if err != nil {
 		fmt.Printf("unable to generate selectors %s\n", err)
 		return err.Error()
 	}
 	var edges, nedges []string
-	for _, n := range edge {
-		var edgeStr strings.Builder
-		dagjson.Encode(n, &edgeStr)
-		edges = append(edges, edgeStr.String())
-	}
-	for _, n := range nedge {
-		var nedgeStr strings.Builder
-		dagjson.Encode(n, &nedgeStr)
-		nedges = append(nedges, nedgeStr.String())
+	for _, n := range parseSelectors {
+		if n.Recursive {
+			edges = append(edges, n.Path)
+		} else {
+			nedges = append(nedges, n.Path)
+		}
+
 	}
 	selectors := struct {
 		edges  []string
