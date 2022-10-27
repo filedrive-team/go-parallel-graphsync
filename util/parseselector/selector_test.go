@@ -8,7 +8,7 @@ import (
 	"github.com/ipld/go-ipld-prime/traversal/selector"
 	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
 	textselector "github.com/ipld/go-ipld-selector-text-lite"
-	"reflect"
+	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
 )
@@ -42,63 +42,67 @@ func TestParseSelector(t *testing.T) {
 	selU1, _ := textselector.SelectorSpecFromPath("/0/Hash/Links", false, ssb.ExploreUnion(selU0, fromPath1))
 	selU2, _ := textselector.SelectorSpecFromPath("Links", false, ssb.ExploreUnion(selU1, fromPath4))
 
-	selUnix, _ := textselector.SelectorSpecFromPath("a/b/c", false, selSameDepth)
+	//selUnix := util.UnixFSPathSelectorSpec("a/1.jpg", nil)
 
 	testCases := []struct {
 		name     string
 		selRes   builder.SelectorSpec
-		resPaths []string
+		resPaths []ExplorePath
 	}{
 		{
 			name:   "same-depth",
 			selRes: selSameDepth,
-			resPaths: []string{"Links/0/Hash",
-				"Links/1/Hash",
+			resPaths: []ExplorePath{
+				{"Links/0/Hash", false},
+				{"Links/1/Hash", true},
 			},
 		},
 		{
 			name:   "diff-depth",
 			selRes: selDiffDepth,
-			resPaths: []string{"Links/0/Hash/Links/0/Hash",
-				"Links/3/Hash",
+			resPaths: []ExplorePath{
+				{"Links/0/Hash/Links/0/Hash", false},
+				{"Links/3/Hash", true},
 			},
 		},
 		{
 			name:   "diff-depth & same-path",
 			selRes: selDiffSamePath,
-			resPaths: []string{"Links/0/Hash/Links/0/Hash",
-				"Links/0/Hash/Links/1/Hash",
-				"Links/3/Hash",
+			resPaths: []ExplorePath{
+				{"Links/0/Hash/Links/0/Hash", false},
+				{"Links/0/Hash/Links/1/Hash", true},
+				{"Links/3/Hash", true},
 			},
 		},
 		{
 			name:   "more",
 			selRes: selMore,
-			resPaths: []string{"Links/0/Hash/Links/0/Hash",
-				"Links/0/Hash/Links/1/Hash",
-				"Links/0/Hash/Links/2/Hash",
-				"Links/2/Hash/Links/2/Hash",
-				"Links/4/Hash/Links/1/Hash",
-				"Links/3/Hash",
+			resPaths: []ExplorePath{
+				{"Links/0/Hash/Links/0/Hash", false},
+				{"Links/0/Hash/Links/1/Hash", true},
+				{"Links/0/Hash/Links/2/Hash", true},
+				{"Links/2/Hash/Links/2/Hash", true},
+				{"Links/4/Hash/Links/1/Hash", true},
+				{"Links/3/Hash", true},
 			},
 		},
 		{
 			name:   "union-union",
 			selRes: selU2,
-			resPaths: []string{"Links/0/Hash/Links/1/Hash/Links/0/Hash",
-				"Links/0/Hash/Links/1/Hash/Links/1/Hash",
-				"Links/0/Hash/Links/0/Hash",
-				"Links/3/Hash",
+			resPaths: []ExplorePath{
+				{"Links/0/Hash/Links/1/Hash/Links/0/Hash", false},
+				{"Links/0/Hash/Links/1/Hash/Links/1/Hash", true},
+				{"Links/0/Hash/Links/0/Hash", false},
+				{"Links/3/Hash", true},
 			},
 		},
-		{
-			name:   "unix",
-			selRes: selUnix,
-			resPaths: []string{
-				"a/b/c/Links/0/Hash",
-				"a/b/c/Links/1/Hash",
-			},
-		},
+		//{
+		//	name:   "unix",
+		//	selRes: selUnix,
+		//	resPaths: []ExplorePath{
+		//		{"a/1.jpg", true},
+		//	},
+		//},
 	}
 	links, err := traversal.SelectLinks(selMore.Node())
 	if err != nil {
@@ -115,14 +119,11 @@ func TestParseSelector(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var paths []string
+			var paths []ExplorePath
 			for _, ec := range er.eCtx {
-				fmt.Println(ec.path, ec.edgesFound)
-				paths = append(paths, ec.path)
+				paths = append(paths, ec.Get()...)
 			}
-			if !reflect.DeepEqual(paths, tc.resPaths) {
-				t.Fatal("should equal")
-			}
+			require.Equal(s, tc.resPaths, paths)
 		})
 	}
 

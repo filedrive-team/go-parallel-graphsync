@@ -2,9 +2,8 @@ package parseselector
 
 import (
 	"fmt"
-	"github.com/ipld/go-ipld-prime/traversal/selector"
-
 	"github.com/ipld/go-ipld-prime/datamodel"
+	"github.com/ipld/go-ipld-prime/traversal/selector"
 )
 
 // ExploreRange traverses a list, and for each element in the range specified,
@@ -91,11 +90,10 @@ func (er *ERContext) ParseExploreRange(n datamodel.Node) (selector.Selector, err
 	for i := startValue; i < endValue; i++ {
 		x.interest = append(x.interest, datamodel.PathSegmentOfInt(i))
 	}
-	er.collectPath(&exploreRecursiveContext{rp: rangePath{
-		path:        newPathFromPathSegments(er.ePc.pathSegment),
-		isRangePath: true,
-		start:       startValue,
-		end:         endValue,
-	}})
+	er.collectPath(&exploreRangePathContext{
+		path:  newPathFromPathSegments(er.ePc.pathSegment),
+		start: startValue,
+		end:   endValue,
+	})
 	return x, nil
 }

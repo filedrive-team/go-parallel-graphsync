@@ -5,7 +5,6 @@ import (
 	"github.com/ipld/go-ipld-prime"
 	"github.com/ipld/go-ipld-prime/traversal/selector"
 	textselector "github.com/ipld/go-ipld-selector-text-lite"
-	"strconv"
 	"strings"
 
 	"github.com/ipld/go-ipld-prime/datamodel"
@@ -17,7 +16,7 @@ type ERParseContext struct {
 }
 
 type ERContext struct {
-	eCtx  []*exploreRecursiveContext
+	eCtx  []ExplorePathContext
 	ePc   ERParseContext
 	union []string
 }
@@ -71,7 +70,6 @@ func (er *ERContext) ParseSelector(n datamodel.Node) (selector.Selector, error) 
 
 // PushParent puts a parent onto the stack of parents for a parse context
 func (c *ERParseContext) PushParent(parent selector.ParsedParent) *ERContext {
-
 	return &ERContext{ePc: ERParseContext{selPc: c.selPc.PushParent(parent)}}
 }
 
@@ -79,17 +77,12 @@ func (c *ERParseContext) PushParent(parent selector.ParsedParent) *ERContext {
 func (c *ERParseContext) PushLinks(l string) {
 	c.pathSegment = append(c.pathSegment, l)
 }
-func (er *ERContext) collectPath(erc *exploreRecursiveContext) {
-	erc.path = newPathFromPathSegments(er.ePc.pathSegment)
-	//ectx = append(ectx, erc)
-	if strings.HasSuffix(erc.path, "Hash") {
-		er.eCtx = append(er.eCtx, erc)
-	}
-	if erc.rp.isRangePath {
-		er.eCtx = append(er.eCtx, erc)
-	}
-	if erc.indexP.isIndex {
-		er.eCtx = append(er.eCtx, erc)
+func (er *ERContext) collectPath(erc ExplorePathContext) {
+	paths := erc.Get()
+	if len(paths) > 0 {
+		if strings.HasSuffix(paths[0].Path, "Hash") {
+			er.eCtx = append(er.eCtx, erc)
+		}
 	}
 }
 func newPathFromPathSegments(paths []string) string {
@@ -99,47 +92,45 @@ func newPathFromPathSegments(paths []string) string {
 	}
 	return datamodel.NewPath(ps).String()
 }
-func GenerateSelectors(sel ipld.Node) (edge, nedge []ipld.Node, rn []ipld.Node, in []ipld.Node, err error) {
+func GenerateSelectors(sel ipld.Node) (edge, nedge []ipld.Node, err error) {
 	var er = &ERContext{}
 	_, err = er.ParseSelector(sel)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, err
 	}
 	for _, ec := range er.eCtx {
-		spec, _ := textselector.SelectorSpecFromPath(textselector.Expression(ec.path), false, nil)
-		if ec.edgesFound > 0 {
-			edge = append(edge, spec.Node())
-		} else {
-			nedge = append(nedge, spec.Node())
+		paths := ec.Get()
+		for _, ep := range paths {
+			spec, _ := textselector.SelectorSpecFromPath(textselector.Expression(ep.Path), false, nil)
+			if ep.Recursive {
+				edge = append(edge, spec.Node())
+			} else {
+				nedge = append(nedge, spec.Node())
+			}
 		}
 	}
-	rn, in = generateRangeIndex(er.eCtx)
-	return edge, nedge, rn, in, nil
+	return edge, nedge, nil
 }
 
-// todo The case of range for each node is too complicated and may need to be implemented later or implemented in another way
-func generateRangeIndex(erc []*exploreRecursiveContext) (rangeNode []ipld.Node, indexNode []ipld.Node) {
-	for _, er := range erc {
-		if er.indexP.isIndex {
-			selSpec, err := textselector.SelectorSpecFromPath(textselector.Expression(er.indexP.path+"/"+strconv.Itoa(int(er.indexP.index))+"/Hash"), false, nil)
-			//todo if err return or continue
-			if err != nil {
-				return nil, nil
-			}
-			indexNode = append(indexNode, selSpec.Node())
-		}
-		if er.rp.isRangePath {
-			for i := er.rp.start; i < er.rp.end; i++ {
-				selSpec, err := textselector.SelectorSpecFromPath(textselector.Expression(er.rp.path+"/"+strconv.Itoa(int(i))+"/Hash"), false, nil)
-				//todo if err return or continue
-				if err != nil {
-					return nil, nil
-				}
-				rangeNode = append(rangeNode, selSpec.Node())
-			}
-		}
+type exploreMatchContext struct {
+	path       string
+	edgesFound int
+}
+
+func (emc *exploreMatchContext) Link(s selector.Selector) bool {
+	_, ok := s.(selector.ExploreRecursiveEdge)
+	if ok {
+		emc.edgesFound++
 	}
-	return rangeNode, indexNode
+	return ok
+}
+
+func (emc *exploreMatchContext) Get() []ExplorePath {
+	return []ExplorePath{{
+		Path:      emc.path,
+		Recursive: emc.edgesFound > 0,
+	},
+	}
 }
 
 // ParseMatcher assembles a Selector
@@ -150,7 +141,9 @@ func (er *ERContext) ParseMatcher(n datamodel.Node) (selector.Selector, error) {
 	if err != nil || matcher == nil {
 		return nil, err
 	}
-	er.collectPath(&exploreRecursiveContext{})
+	er.collectPath(&exploreMatchContext{
+		path: newPathFromPathSegments(er.ePc.pathSegment),
+	})
 	return matcher, nil
 }
 

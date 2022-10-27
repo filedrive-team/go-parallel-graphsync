@@ -271,7 +271,7 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 			var sss strings.Builder
 			dagjson.Encode(tc.selRes, &sss)
 			fmt.Println(sss.String())
-			edge, nedge, rn, in, err := parseselector.GenerateSelectors(tc.selRes)
+			edge, nedge, err := parseselector.GenerateSelectors(tc.selRes)
 			if err != nil {
 				return
 			}
@@ -309,44 +309,6 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 
 					if strings.HasSuffix(blk.Path.String(), "Hash") && blk.LastBlock.Link != nil {
 						//fmt.Printf("edge path=%s:%s \n", blk.Path.String(), blk.LastBlock.Link.String())
-						cids = append(cids, blk.LastBlock.Link.String())
-					}
-				}
-			}
-			for _, ne := range rn {
-				responseProgress, errors := bigCarParExchange.Request(context.TODO(), bigCarAddrInfos[0].ID, cidlink.Link{Cid: bigCarRootCid}, ne)
-				go func() {
-					select {
-					case err := <-errors:
-						if err != nil {
-							t.Fatal(err)
-						}
-					}
-				}()
-
-				for blk := range responseProgress {
-
-					if strings.HasSuffix(blk.Path.String(), "Hash") && blk.LastBlock.Link != nil {
-						fmt.Printf("range path=%s:%s \n", blk.Path.String(), blk.LastBlock.Link.String())
-						cids = append(cids, blk.LastBlock.Link.String())
-					}
-				}
-			}
-			for _, ne := range in {
-				responseProgress, errors := bigCarParExchange.Request(context.TODO(), bigCarAddrInfos[0].ID, cidlink.Link{Cid: bigCarRootCid}, ne)
-				go func() {
-					select {
-					case err := <-errors:
-						if err != nil {
-							t.Fatal(err)
-						}
-					}
-				}()
-
-				for blk := range responseProgress {
-
-					if strings.HasSuffix(blk.Path.String(), "Hash") && blk.LastBlock.Link != nil {
-						fmt.Printf("index path=%s:%s \n", blk.Path.String(), blk.LastBlock.Link.String())
 						cids = append(cids, blk.LastBlock.Link.String())
 					}
 				}

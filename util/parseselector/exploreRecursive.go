@@ -160,27 +160,12 @@ func (s ExploreRecursive) Match(node datamodel.Node) (datamodel.Node, error) {
 }
 
 type exploreRecursiveContext struct {
-	path       string
 	edgesFound int
-	rp         rangePath
-	indexP     indexPath
-}
-type rangePath struct {
-	path        string
-	isRangePath bool
-	start       int64
-	end         int64
-}
-type indexPath struct {
-	path    string
-	isIndex bool
-	index   int64
 }
 
 func (erc *exploreRecursiveContext) Link(s selector.Selector) bool {
 	_, ok := s.(selector.ExploreRecursiveEdge)
 	if ok {
-		//fmt.Println("found")
 		erc.edgesFound++
 	}
 	return ok
@@ -204,6 +189,7 @@ func (er *ERContext) ParseExploreRecursive(n datamodel.Node) (selector.Selector,
 	if err != nil {
 		return nil, fmt.Errorf("selector spec parse rejected: sequence field must be present in ExploreRecursive selector")
 	}
+
 	erc := &exploreRecursiveContext{}
 	tmp := er.ePc.PushParent(erc)
 	selector1, err := tmp.ParseSelector(sequence)
@@ -213,7 +199,11 @@ func (er *ERContext) ParseExploreRecursive(n datamodel.Node) (selector.Selector,
 	if erc.edgesFound == 0 {
 		return nil, fmt.Errorf("selector spec parse rejected: ExploreRecursive must have at least one ExploreRecursiveEdge")
 	}
-	er.collectPath(erc)
+
+	er.collectPath(&exploreRecursivePathContext{
+		path:      newPathFromPathSegments(er.ePc.pathSegment),
+		recursive: erc.edgesFound > 0,
+	})
 	// todo need check if same
 	er.eCtx = append(er.eCtx, tmp.eCtx...)
 	var stopCondition *selector.Condition

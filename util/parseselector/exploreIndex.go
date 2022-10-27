@@ -2,9 +2,8 @@ package parseselector
 
 import (
 	"fmt"
-	"github.com/ipld/go-ipld-prime/traversal/selector"
-
 	"github.com/ipld/go-ipld-prime/datamodel"
+	"github.com/ipld/go-ipld-prime/traversal/selector"
 )
 
 // ExploreIndex traverses a specific index in a list, and applies a next
@@ -65,10 +64,9 @@ func (er *ERContext) ParseExploreIndex(n datamodel.Node) (selector.Selector, err
 	if err != nil {
 		return nil, err
 	}
-	er.collectPath(&exploreRecursiveContext{indexP: indexPath{
-		path:    newPathFromPathSegments(er.ePc.pathSegment),
-		isIndex: true,
-		index:   indexValue,
-	}})
+	er.collectPath(&exploreIndexPathContext{
+		path:  newPathFromPathSegments(er.ePc.pathSegment),
+		index: indexValue,
+	})
 	return ExploreIndex{selector, [1]datamodel.PathSegment{datamodel.PathSegmentOfInt(indexValue)}}, nil
 }
