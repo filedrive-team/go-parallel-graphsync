@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
+	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/filedrive-team/go-parallel-graphsync/util/parseselector"
 	"github.com/ipfs/go-graphsync"
 	"github.com/ipld/go-ipld-prime"
