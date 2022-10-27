@@ -2,6 +2,7 @@ package parseselector
 
 import (
 	"fmt"
+	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
 	"github.com/ipld/go-ipld-prime/traversal"
@@ -42,7 +43,14 @@ func TestParseSelector(t *testing.T) {
 	selU1, _ := textselector.SelectorSpecFromPath("/0/Hash/Links", false, ssb.ExploreUnion(selU0, fromPath1))
 	selU2, _ := textselector.SelectorSpecFromPath("Links", false, ssb.ExploreUnion(selU1, fromPath4))
 
-	//selUnix := util.UnixFSPathSelectorSpec("a/1.jpg", nil)
+	selRange, _ := util.GenerateSubRangeSelectorSpec("", 1, 3)
+	path3, _ := util.GenerateDataSelectorSpec("Links/3/Hash", true, nil)
+	selUnionRange := ssb.ExploreUnion(selRange, path3)
+
+	selIndex := ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+		specBuilder.Insert("Links", ssb.ExploreIndex(0, ssb.ExploreRecursive(selector.RecursionLimitNone(),
+			ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())))))
+	})
 
 	testCases := []struct {
 		name     string
@@ -96,13 +104,30 @@ func TestParseSelector(t *testing.T) {
 				{"Links/3/Hash", true},
 			},
 		},
-		//{
-		//	name:   "unix",
-		//	selRes: selUnix,
-		//	resPaths: []ExplorePath{
-		//		{"a/1.jpg", true},
-		//	},
-		//},
+		{
+			name:   "range",
+			selRes: selRange,
+			resPaths: []ExplorePath{
+				{"Links/1/Hash", true},
+				{"Links/2/Hash", true},
+			},
+		},
+		{
+			name:   "union-range",
+			selRes: selUnionRange,
+			resPaths: []ExplorePath{
+				{"Links/1/Hash", true},
+				{"Links/2/Hash", true},
+				{"Links/3/Hash", true},
+			},
+		},
+		{
+			name:   "index",
+			selRes: selIndex,
+			resPaths: []ExplorePath{
+				{"Links/0/Hash", true},
+			},
+		},
 	}
 	links, err := traversal.SelectLinks(selMore.Node())
 	if err != nil {
@@ -123,7 +148,10 @@ func TestParseSelector(t *testing.T) {
 			for _, ec := range er.eCtx {
 				paths = append(paths, ec.Get()...)
 			}
-			require.Equal(s, tc.resPaths, paths)
+			require.Equal(s, len(tc.resPaths), len(paths))
+			for _, path := range paths {
+				require.Contains(s, tc.resPaths, path)
+			}
 		})
 	}
 

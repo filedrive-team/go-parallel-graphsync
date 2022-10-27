@@ -201,8 +201,7 @@ func (er *ERContext) ParseExploreRecursive(n datamodel.Node) (selector.Selector,
 	}
 
 	er.collectPath(&exploreRecursivePathContext{
-		path:      newPathFromPathSegments(er.ePc.pathSegment),
-		recursive: erc.edgesFound > 0,
+		path: newPathFromPathSegments(er.ePc.pathSegment),
 	})
 	// todo need check if same
 	er.eCtx = append(er.eCtx, tmp.eCtx...)

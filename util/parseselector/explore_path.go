@@ -10,39 +10,53 @@ type ExplorePath struct {
 }
 
 type ExplorePathContext interface {
+	NotSupport() bool
 	Get() []ExplorePath
 }
 
 type exploreRecursivePathContext struct {
-	path      string
-	recursive bool
+	path       string
+	notSupport bool
+}
+
+func (erc *exploreRecursivePathContext) NotSupport() bool {
+	return erc.notSupport
 }
 
 func (erc *exploreRecursivePathContext) Get() []ExplorePath {
 	return []ExplorePath{{
 		Path:      erc.path,
-		Recursive: erc.recursive,
+		Recursive: true,
 	},
 	}
 }
 
 type exploreMatchPathContext struct {
-	path      string
-	recursive bool
+	path       string
+	notSupport bool
+}
+
+func (emc *exploreMatchPathContext) NotSupport() bool {
+	return emc.notSupport
 }
 
 func (emc *exploreMatchPathContext) Get() []ExplorePath {
 	return []ExplorePath{{
 		Path:      emc.path,
-		Recursive: emc.recursive,
+		Recursive: false,
 	},
 	}
 }
 
 type exploreIndexPathContext struct {
-	path      string
-	index     int64
-	recursive bool
+	path       string
+	index      int64
+	recursive  bool
+	notSupport bool
+}
+
+func (eic *exploreIndexPathContext) NotSupport() bool {
+	return eic.notSupport
 }
 
 func (eic *exploreIndexPathContext) Get() []ExplorePath {
@@ -54,10 +68,15 @@ func (eic *exploreIndexPathContext) Get() []ExplorePath {
 }
 
 type exploreRangePathContext struct {
-	path      string
-	start     int64
-	end       int64
-	recursive bool
+	path       string
+	start      int64
+	end        int64
+	recursive  bool
+	notSupport bool
+}
+
+func (erc *exploreRangePathContext) NotSupport() bool {
+	return erc.notSupport
 }
 
 func (erc *exploreRangePathContext) Get() []ExplorePath {

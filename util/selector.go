@@ -48,8 +48,7 @@ func GetDataSelector(dps *string, matchPath bool) (datamodel.Node, error) {
 	return sel, nil
 }
 
-func GenerateDataSelector(dpsPath string, matchPath bool, optionalSubSel builder.SelectorSpec) (datamodel.Node, error) {
-	sel := selectorparse.CommonSelector_ExploreAllRecursively
+func GenerateDataSelectorSpec(dpsPath string, matchPath bool, optionalSubSel builder.SelectorSpec) (selspec builder.SelectorSpec, err error) {
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
 
 	subselAtTarget := ssb.ExploreRecursive(
@@ -59,7 +58,7 @@ func GenerateDataSelector(dpsPath string, matchPath bool, optionalSubSel builder
 	if optionalSubSel != nil {
 		subselAtTarget = optionalSubSel
 	}
-	selspec, err := textselector.SelectorSpecFromPath(
+	selspec, err = textselector.SelectorSpecFromPath(
 		textselector.Expression(dpsPath), matchPath,
 		subselAtTarget,
 	)
@@ -67,9 +66,26 @@ func GenerateDataSelector(dpsPath string, matchPath bool, optionalSubSel builder
 		return nil, xerrors.Errorf("failed to parse text-selector '%s': %w", dpsPath, err)
 	}
 
-	sel = selspec.Node()
+	return selspec, nil
+}
 
-	return sel, nil
+func GenerateSubRangeSelectorSpec(selPath string, start, end int64) (builder.SelectorSpec, error) {
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	subsel := ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+		specBuilder.Insert("Links", ssb.ExploreRange(start, end,
+			ssb.ExploreRecursive(selector.RecursionLimitNone(),
+				ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
+		))
+	})
+	return GenerateDataSelectorSpec(selPath, false, subsel)
+}
+
+func GenerateSubRangeSelector(selPath string, start, end int64) (datamodel.Node, error) {
+	selSpec, err := GenerateSubRangeSelectorSpec(selPath, start, end)
+	if err != nil {
+		return nil, err
+	}
+	return selSpec.Node(), nil
 }
 
 func CheckIfLinkSelector(sel ipld.Node) bool {
