@@ -16,7 +16,7 @@ import (
 
 const (
 	LeafLinksTemplate  = "/%v/Hash/Links"
-	LeftLinksTemplate  = "Links/0/Hash"
+	LeftLinks          = "Links/0/Hash"
 	CheckLinksTemplate = "/%v/Hash"
 )
 
@@ -31,9 +31,13 @@ type ParallelGraphRequestManger struct {
 }
 
 //todo implement choose
-func (s *ParallelGraphRequestManger) choosePeer() peer.ID {
+func (s *ParallelGraphRequestManger) ChoosePeer() peer.ID {
 	return s.peerInfos[0].ID
 }
+
+// StartParGraphSyncRequestManger
+// this func will sync all subNode of the rootNode
+// you can use the util/parseselector/GenerateSelectors() to parse a complex selector ,then use this func to sync
 func StartParGraphSyncRequestManger(ctx context.Context, pgs pargraphsync.ParallelGraphExchange, root cidlink.Link, peerIds []peer.AddrInfo) {
 	var s = ParallelGraphRequestManger{
 		parallelGraphExchange: pgs,
@@ -44,9 +48,11 @@ func StartParGraphSyncRequestManger(ctx context.Context, pgs pargraphsync.Parall
 		rootCid:               root,
 		peerInfos:             peerIds,
 	}
-	s.requestChan <- []pargraphsync.RequestParam{{PeerId: s.choosePeer(), Root: root, Selector: LeftSelector("")}}
+	s.requestChan <- []pargraphsync.RequestParam{{PeerId: s.ChoosePeer(), Root: root, Selector: LeftSelector("")}}
 	s.StartRun(ctx)
 }
+
+// StartRun you can also build a ParallelGraphRequestManger yourself and use this method to synchronize
 func (s *ParallelGraphRequestManger) StartRun(ctx context.Context) {
 	for {
 		select {
@@ -61,6 +67,7 @@ func (s *ParallelGraphRequestManger) StartRun(ctx context.Context) {
 	}
 }
 
+// Close the Manger
 func (s *ParallelGraphRequestManger) Close() {
 	//todo more action
 	fmt.Println("close")
@@ -160,7 +167,7 @@ func (s *ParallelGraphRequestManger) dividePaths(paths []string) []pargraphsync.
 }
 func LeftSelector(path string) ipld.Node {
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
-	selSpec, _ := textselector.SelectorSpecFromPath(LeftLinksTemplate, false, ssb.ExploreRecursiveEdge())
+	selSpec, _ := textselector.SelectorSpecFromPath(LeftLinks, false, ssb.ExploreRecursiveEdge())
 	fromPath, _ := textselector.SelectorSpecFromPath(textselector.Expression(path), false, ssb.ExploreRecursive(selector.RecursionLimitNone(), selSpec))
 	return fromPath.Node()
 }

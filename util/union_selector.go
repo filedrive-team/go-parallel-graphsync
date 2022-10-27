@@ -68,7 +68,7 @@ func (t *trie) unionSelectorsFromTrieNode(nd *trieNode, isLeft bool) builder.Sel
 	switch len(nd.children) {
 	case 0:
 		if isLeft {
-			selSpec, _ := textselector.SelectorSpecFromPath(LeftLinksTemplate, false, ssb.ExploreRecursiveEdge())
+			selSpec, _ := textselector.SelectorSpecFromPath(LeftLinks, false, ssb.ExploreRecursiveEdge())
 			selectorSpec, err := textselector.SelectorSpecFromPath(textselector.Expression(nd.segment), false, ssb.ExploreRecursive(selector.RecursionLimitNone(), selSpec))
 			if err != nil {
 				panic(err)

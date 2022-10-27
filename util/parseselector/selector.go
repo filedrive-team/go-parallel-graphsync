@@ -20,6 +20,11 @@ type ERContext struct {
 	ePc   ERParseContext
 	union []string
 }
+type ParsedSelectors struct {
+	Path      string
+	Sel       ipld.Node
+	Recursive bool
+}
 
 // ParseSelector creates a Selector from an IPLD Selector Node with the given context
 //todo Maybe there is a logical problem, and the recursive call will transfer to the method of IPLD prime,
@@ -92,7 +97,27 @@ func newPathFromPathSegments(paths []string) string {
 	}
 	return datamodel.NewPath(ps).String()
 }
-func GenerateSelectors(sel ipld.Node) (edge, nedge []ipld.Node, err error) {
+
+func GenerateSelectors(sel ipld.Node) (selectors []ParsedSelectors, err error) {
+	var er = &ERContext{}
+	_, err = er.ParseSelector(sel)
+	if err != nil {
+		return nil, err
+	}
+	for _, ec := range er.eCtx {
+		paths := ec.Get()
+		for _, ep := range paths {
+			spec, _ := textselector.SelectorSpecFromPath(textselector.Expression(ep.Path), false, nil)
+			selectors = append(selectors, ParsedSelectors{
+				Path:      ep.Path,
+				Sel:       spec.Node(),
+				Recursive: ep.Recursive,
+			})
+		}
+	}
+	return selectors, nil
+}
+func GeneratePathAndSelector(sel ipld.Node) (edge, nedge []string, err error) {
 	var er = &ERContext{}
 	_, err = er.ParseSelector(sel)
 	if err != nil {
@@ -101,11 +126,10 @@ func GenerateSelectors(sel ipld.Node) (edge, nedge []ipld.Node, err error) {
 	for _, ec := range er.eCtx {
 		paths := ec.Get()
 		for _, ep := range paths {
-			spec, _ := textselector.SelectorSpecFromPath(textselector.Expression(ep.Path), false, nil)
 			if ep.Recursive {
-				edge = append(edge, spec.Node())
+				edge = append(edge, ep.Path)
 			} else {
-				nedge = append(nedge, spec.Node())
+				nedge = append(nedge, ep.Path)
 			}
 		}
 	}
