@@ -132,9 +132,20 @@ func (s *ParGSTask) run(ctx context.Context, params []pargraphsync.RequestParam)
 			}
 		}
 	}()
+	pathMap := make(map[string]int64)
 	for blk := range responseProgress {
 		s.DoneTasks[blk.Path.String()] = struct{}{}
+		fmt.Printf("path:%v\n", blk.Path)
+		if nd, err := blk.Node.LookupByString("Links"); err == nil && nd.Length() != 0 {
+			fmt.Printf("links=%d\n", nd.Length())
+			if blk.Path.String() == "" {
+				pathMap[blk.Path.String()+"Links"] = nd.Length()
+			} else {
+				pathMap[blk.Path.String()+"/Links"] = nd.Length()
+			}
+		}
 	}
+	s.CollectTasks(pathMap)
 }
 
 func dividePath(paths []string, peerIds []peer.AddrInfo) Tasks {
