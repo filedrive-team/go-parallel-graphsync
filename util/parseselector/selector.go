@@ -62,12 +62,6 @@ func (er *ERContext) ParseSelector(n datamodel.Node) (selector.Selector, error) 
 	}
 }
 
-//// PushParent puts a parent onto the stack of parents for a parse context
-//func (er *ERContext) PushParent(parent selector.ParsedParent) *ERContext {
-//	er.ePc = ERParseContext{selPc: er.ePc.selPc.PushParent(parent)}
-//	return er
-//}
-
 // PushParent puts a parent onto the stack of parents for a parse context
 func (c *ERParseContext) PushParent(parent selector.ParsedParent) *ERContext {
 	return &ERContext{ePc: ERParseContext{selPc: c.selPc.PushParent(parent)}}
@@ -77,6 +71,7 @@ func (c *ERParseContext) PushParent(parent selector.ParsedParent) *ERContext {
 func (c *ERParseContext) PushLinks(l string) {
 	c.pathSegment = append(c.pathSegment, l)
 }
+
 func (er *ERContext) collectPath(erc ExplorePathContext) {
 	paths := erc.Get()
 	if len(paths) > 0 {
@@ -85,6 +80,7 @@ func (er *ERContext) collectPath(erc ExplorePathContext) {
 		}
 	}
 }
+
 func newPathFromPathSegments(paths []string) string {
 	var ps []datamodel.PathSegment
 	for _, p := range paths {
@@ -92,6 +88,7 @@ func newPathFromPathSegments(paths []string) string {
 	}
 	return datamodel.NewPath(ps).String()
 }
+
 func GenerateSelectors(sel ipld.Node) (edge, nedge []ipld.Node, err error) {
 	var er = &ERContext{}
 	_, err = er.ParseSelector(sel)
@@ -112,27 +109,6 @@ func GenerateSelectors(sel ipld.Node) (edge, nedge []ipld.Node, err error) {
 	return edge, nedge, nil
 }
 
-type exploreMatchContext struct {
-	path       string
-	edgesFound int
-}
-
-func (emc *exploreMatchContext) Link(s selector.Selector) bool {
-	_, ok := s.(selector.ExploreRecursiveEdge)
-	if ok {
-		emc.edgesFound++
-	}
-	return ok
-}
-
-func (emc *exploreMatchContext) Get() []ExplorePath {
-	return []ExplorePath{{
-		Path:      emc.path,
-		Recursive: emc.edgesFound > 0,
-	},
-	}
-}
-
 // ParseMatcher assembles a Selector
 // from a matcher selector node
 // TODO: Parse labels and conditions
@@ -141,7 +117,7 @@ func (er *ERContext) ParseMatcher(n datamodel.Node) (selector.Selector, error) {
 	if err != nil || matcher == nil {
 		return nil, err
 	}
-	er.collectPath(&exploreMatchContext{
+	er.collectPath(&exploreMatchPathContext{
 		path: newPathFromPathSegments(er.ePc.pathSegment),
 	})
 	return matcher, nil

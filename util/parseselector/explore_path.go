@@ -26,6 +26,19 @@ func (erc *exploreRecursivePathContext) Get() []ExplorePath {
 	}
 }
 
+type exploreMatchPathContext struct {
+	path      string
+	recursive bool
+}
+
+func (emc *exploreMatchPathContext) Get() []ExplorePath {
+	return []ExplorePath{{
+		Path:      emc.path,
+		Recursive: emc.recursive,
+	},
+	}
+}
+
 type exploreIndexPathContext struct {
 	path      string
 	index     int64
