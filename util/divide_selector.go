@@ -12,6 +12,7 @@ import (
 	textselector "github.com/ipld/go-ipld-selector-text-lite"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"math"
+	"sync"
 )
 
 const (
@@ -27,18 +28,40 @@ type ParallelGraphRequestManger struct {
 	requestChan           chan []pargraphsync.RequestParam
 	doneRequests          map[string]struct{}
 	rootCid               cidlink.Link
-	peerInfos             []peer.AddrInfo
+	parallelGraphServers  map[string]*ParallelGraphServer
 }
 
-//todo implement choose
+type ParallelGraphServer struct {
+	lock      sync.Mutex
+	dealCount int
+	//todo more about server info
+	addrInfo peer.AddrInfo
+}
+
 func (s *ParallelGraphRequestManger) ChoosePeer() peer.ID {
-	return s.peerInfos[0].ID
+	//todo implement more about choose eg:latency and transfer speed
+	var dealCount = 1000
+	var peerId peer.ID
+	var pgs *ParallelGraphServer
+	// todo check latency and transfer speed
+	for _, pgDServer := range s.parallelGraphServers {
+		if pgDServer.dealCount < dealCount {
+			dealCount = pgDServer.dealCount
+			peerId = pgDServer.addrInfo.ID
+			pgDServer.dealCount++
+			pgs = pgDServer
+		}
+	}
+	s.parallelGraphServers[peerId.String()].lock.Lock()
+	s.parallelGraphServers[peerId.String()] = pgs
+	s.parallelGraphServers[peerId.String()].lock.Unlock()
+	return peerId
 }
 
 // StartParGraphSyncRequestManger
 // this func will sync all subNode of the rootNode
 // you can use the util/parseselector/GenerateSelectors() to parse a complex selector ,then use this func to sync
-func StartParGraphSyncRequestManger(ctx context.Context, pgs pargraphsync.ParallelGraphExchange, root cidlink.Link, peerIds []peer.AddrInfo) {
+func StartParGraphSyncRequestManger(ctx context.Context, pgs pargraphsync.ParallelGraphExchange, root cidlink.Link, infos []peer.AddrInfo) {
 	var s = ParallelGraphRequestManger{
 		parallelGraphExchange: pgs,
 		collectedRequests:     make(map[string]struct{}),
@@ -46,10 +69,20 @@ func StartParGraphSyncRequestManger(ctx context.Context, pgs pargraphsync.Parall
 		requestChan:           make(chan []pargraphsync.RequestParam, 1),
 		doneRequests:          make(map[string]struct{}),
 		rootCid:               root,
-		peerInfos:             peerIds,
+		parallelGraphServers:  addrInfoToParallelGraphServers(infos),
 	}
 	s.requestChan <- []pargraphsync.RequestParam{{PeerId: s.ChoosePeer(), Root: root, Selector: LeftSelector("")}}
 	s.StartRun(ctx)
+}
+func addrInfoToParallelGraphServers(infos []peer.AddrInfo) map[string]*ParallelGraphServer {
+	parallelGraphServers := make(map[string]*ParallelGraphServer)
+	for _, info := range infos {
+		parallelGraphServers[info.ID.String()] = &ParallelGraphServer{
+			dealCount: 0,
+			addrInfo:  info,
+		}
+	}
+	return parallelGraphServers
 }
 
 // StartRun you can also build a ParallelGraphRequestManger yourself and use this method to synchronize
@@ -134,13 +167,21 @@ func (s *ParallelGraphRequestManger) run(ctx context.Context, params []pargraphs
 			}
 		}
 	}
+	s.freeParallelGraphServer(params)
 	s.collectRequests(pathMap)
+}
+func (s *ParallelGraphRequestManger) freeParallelGraphServer(params []pargraphsync.RequestParam) {
+	for _, param := range params {
+		s.parallelGraphServers[param.PeerId.String()].lock.Lock()
+		s.parallelGraphServers[param.PeerId.String()].dealCount--
+		s.parallelGraphServers[param.PeerId.String()].lock.Unlock()
+	}
 }
 
 func (s *ParallelGraphRequestManger) dividePaths(paths []string) []pargraphsync.RequestParam {
-	ave := int(math.Ceil(float64(len(paths)) / float64(len(s.peerInfos))))
+	ave := int(math.Ceil(float64(len(paths)) / float64(len(s.parallelGraphServers))))
 	var start, end = 0, 0
-	num := len(s.peerInfos)
+	num := len(s.parallelGraphServers)
 	if num > len(paths) {
 		num = len(paths)
 	}
@@ -155,11 +196,10 @@ func (s *ParallelGraphRequestManger) dividePaths(paths []string) []pargraphsync.
 		if err != nil {
 			continue
 		}
-		// todo should choose idle peer
 		requests = append(requests, pargraphsync.RequestParam{
 			Selector: sel,
 			Root:     s.rootCid,
-			PeerId:   s.peerInfos[i].ID,
+			PeerId:   s.ChoosePeer(),
 		})
 		start = end
 	}

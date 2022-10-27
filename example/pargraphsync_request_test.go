@@ -58,7 +58,7 @@ func TestParGraphSyncRequestMangerSubtree(t *testing.T) {
 		}
 		time.Sleep(time.Second)
 		fmt.Println("start")
-		util.StartParGraphSyncRequestManger(context.TODO(), bigCarParExchange, ci, globalAddrInfos)
+		util.StartParGraphSyncRequestManger(context.TODO(), bigCarParExchange, ci, bigCarAddrInfos)
 	}
 
 }
