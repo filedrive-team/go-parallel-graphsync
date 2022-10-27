@@ -86,14 +86,22 @@ func (er *ERContext) ParseExploreRange(n datamodel.Node) (selector.Selector, err
 		endValue,
 		make([]datamodel.PathSegment, 0, endValue-startValue),
 	}
-
 	for i := startValue; i < endValue; i++ {
 		x.interest = append(x.interest, datamodel.PathSegmentOfInt(i))
 	}
-	er.collectPath(&exploreRangePathContext{
+	expPath := &exploreRangePathContext{
 		path:  newPathFromPathSegments(er.ePc.pathSegment),
 		start: startValue,
 		end:   endValue,
-	})
+	}
+	switch sel.(type) {
+	case ExploreRecursive:
+		expPath.recursive = true
+	case selector.Matcher:
+		expPath.recursive = false
+	default:
+		expPath.notSupport = true
+	}
+	er.collectPath(expPath)
 	return x, nil
 }

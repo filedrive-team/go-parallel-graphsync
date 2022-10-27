@@ -60,13 +60,22 @@ func (er *ERContext) ParseExploreIndex(n datamodel.Node) (selector.Selector, err
 	if err != nil {
 		return nil, fmt.Errorf("selector spec parse rejected: next field must be present in ExploreIndex selector")
 	}
-	selector, err := er.ParseSelector(next)
+	sel, err := er.ParseSelector(next)
 	if err != nil {
 		return nil, err
 	}
-	er.collectPath(&exploreIndexPathContext{
+	expPath := &exploreIndexPathContext{
 		path:  newPathFromPathSegments(er.ePc.pathSegment),
 		index: indexValue,
-	})
-	return ExploreIndex{selector, [1]datamodel.PathSegment{datamodel.PathSegmentOfInt(indexValue)}}, nil
+	}
+	switch sel.(type) {
+	case ExploreRecursive:
+		expPath.recursive = true
+	case selector.Matcher:
+		expPath.recursive = false
+	default:
+		expPath.notSupport = true
+	}
+	er.collectPath(expPath)
+	return ExploreIndex{sel, [1]datamodel.PathSegment{datamodel.PathSegmentOfInt(indexValue)}}, nil
 }
