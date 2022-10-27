@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
-	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/filedrive-team/go-parallel-graphsync/util/parseselector"
 	"github.com/ipfs/go-graphsync"
 	"github.com/ipld/go-ipld-prime"
@@ -49,106 +48,107 @@ func startWithBigCar() (pargraphsync.ParallelGraphExchange, []peer.AddrInfo) {
 	return pgs, addrInfos
 }
 
-func TestSimpleDivideSelector(t *testing.T) {
-	var s = util.ParGSTask{
-		Gs:           bigCarParExchange,
-		AddedTasks:   make(map[string]struct{}),
-		StartedTasks: make(map[string]struct{}),
-		RunningTasks: make(chan util.Tasks, 1),
-		DoneTasks:    make(map[string]struct{}),
-		RootCid:      cidlink.Link{Cid: bigCarRootCid},
-		PeerIds:      bigCarAddrInfos,
-	}
-
-	testCases := []struct {
-		name      string
-		links     []string
-		num       []int64
-		paths     []string
-		expectRes bool
-	}{
-		{
-			name:  "normal-true",
-			links: []string{"Links", "Links/0/Hash/Links"},
-			num:   []int64{3, 2},
-			paths: []string{
-				"Links/0/Hash/Links/0/Hash",
-				"Links/0/Hash/Links/1/Hash",
-				"Links/0/Hash",
-				"Links/1/Hash",
-				"Links/2/Hash",
-			},
-			expectRes: true,
-		},
-		{
-			name:  "normal-false",
-			links: []string{"Links", "Links/0/Hash/Links"},
-			num:   []int64{3, 2},
-			paths: []string{
-				"Links/0/Hash/Links/0/Hash",
-				"Links/0/Hash/Links/1/Hash",
-				"Links/0/Hash",
-				"Links/1/Hash",
-				"Links/3/Hash",
-			},
-			expectRes: false,
-		},
-		{
-			name:  "more-true",
-			links: []string{"Links", "Links/1/Hash/Links"},
-			num:   []int64{5, 4},
-			paths: []string{
-				"Links/1/Hash/Links/0/Hash",
-				"Links/1/Hash/Links/1/Hash",
-				"Links/1/Hash/Links/2/Hash",
-				"Links/1/Hash/Links/3/Hash",
-				"Links/0/Hash",
-				"Links/1/Hash",
-				"Links/2/Hash",
-				"Links/3/Hash",
-				"Links/4/Hash",
-			},
-			expectRes: true,
-		},
-		{
-			name:  "more-links",
-			links: []string{"Links", "Links/1/Hash/Links", "Links/2/Hash/Links"},
-			num:   []int64{5, 4, 3},
-			paths: []string{
-				"Links/0/Hash",
-				"Links/1/Hash",
-				"Links/2/Hash",
-				"Links/3/Hash",
-				"Links/4/Hash",
-				"Links/1/Hash/Links/0/Hash",
-				"Links/1/Hash/Links/1/Hash",
-				"Links/1/Hash/Links/2/Hash",
-				"Links/1/Hash/Links/3/Hash",
-				"Links/2/Hash/Links/0/Hash",
-				"Links/2/Hash/Links/1/Hash",
-				"Links/2/Hash/Links/2/Hash",
-			},
-			expectRes: true,
-		},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			var pathMap = make(map[string]int64)
-			for i, link := range testCase.links {
-				pathMap[link] = testCase.num[i]
-			}
-			//simulate the collection of child nodes and child node information
-			s.CollectTasks(pathMap)
-
-			s.StartRun(context.TODO())
-			if compare(s.DoneTasks, testCase.paths) != testCase.expectRes {
-				t.Fatal("not equal")
-			}
-		})
-	}
-
-}
+// since child nodes are automatically collected and synchronized in M2, this test method is no longer applicable
+//func TestSimpleDivideSelector(t *testing.T) {
+//	var s = util.ParGSTask{
+//		Gs:           bigCarParExchange,
+//		AddedTasks:   make(map[string]struct{}),
+//		runningRequests: make(map[string]struct{}),
+//		requestChan:  make(chan []pargraphsync.RequestParam, 1),
+//		doneRequests:    make(map[string]struct{}),
+//		rootCid:      cidlink.Link{Cid: bigCarRootCid},
+//		peerInfos:      bigCarAddrInfos,
+//	}
+//
+//	testCases := []struct {
+//		name      string
+//		links     []string
+//		num       []int64
+//		paths     []string
+//		expectRes bool
+//	}{
+//		{
+//			name:  "normal-true",
+//			links: []string{"Links", "Links/0/Hash/Links"},
+//			num:   []int64{3, 2},
+//			paths: []string{
+//				"Links/0/Hash/Links/0/Hash",
+//				"Links/0/Hash/Links/1/Hash",
+//				"Links/0/Hash",
+//				"Links/1/Hash",
+//				"Links/2/Hash",
+//			},
+//			expectRes: true,
+//		},
+//		{
+//			name:  "normal-false",
+//			links: []string{"Links", "Links/0/Hash/Links"},
+//			num:   []int64{3, 2},
+//			paths: []string{
+//				"Links/0/Hash/Links/0/Hash",
+//				"Links/0/Hash/Links/1/Hash",
+//				"Links/0/Hash",
+//				"Links/1/Hash",
+//				"Links/3/Hash",
+//			},
+//			expectRes: false,
+//		},
+//		{
+//			name:  "more-true",
+//			links: []string{"Links", "Links/1/Hash/Links"},
+//			num:   []int64{5, 4},
+//			paths: []string{
+//				"Links/1/Hash/Links/0/Hash",
+//				"Links/1/Hash/Links/1/Hash",
+//				"Links/1/Hash/Links/2/Hash",
+//				"Links/1/Hash/Links/3/Hash",
+//				"Links/0/Hash",
+//				"Links/1/Hash",
+//				"Links/2/Hash",
+//				"Links/3/Hash",
+//				"Links/4/Hash",
+//			},
+//			expectRes: true,
+//		},
+//		{
+//			name:  "more-links",
+//			links: []string{"Links", "Links/1/Hash/Links", "Links/2/Hash/Links"},
+//			num:   []int64{5, 4, 3},
+//			paths: []string{
+//				"Links/0/Hash",
+//				"Links/1/Hash",
+//				"Links/2/Hash",
+//				"Links/3/Hash",
+//				"Links/4/Hash",
+//				"Links/1/Hash/Links/0/Hash",
+//				"Links/1/Hash/Links/1/Hash",
+//				"Links/1/Hash/Links/2/Hash",
+//				"Links/1/Hash/Links/3/Hash",
+//				"Links/2/Hash/Links/0/Hash",
+//				"Links/2/Hash/Links/1/Hash",
+//				"Links/2/Hash/Links/2/Hash",
+//			},
+//			expectRes: true,
+//		},
+//	}
+//
+//	for _, testCase := range testCases {
+//		t.Run(testCase.name, func(t *testing.T) {
+//			var pathMap = make(map[string]int64)
+//			for i, link := range testCase.links {
+//				pathMap[link] = testCase.num[i]
+//			}
+//			//simulate the collection of child nodes and child node information
+//			s.CollectTasks(pathMap)
+//
+//			s.StartRun(context.TODO())
+//			if compare(s.doneRequests, testCase.paths) != testCase.expectRes {
+//				t.Fatal("not equal")
+//			}
+//		})
+//	}
+//
+//}
 
 //Test whether the selector generated by the different subtrees identified by the given selector can obtain the corresponding subtree cid,
 //and then the operation of splitting and obtaining can be performed

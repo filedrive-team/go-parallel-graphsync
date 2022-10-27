@@ -15,62 +15,45 @@ import (
 )
 
 const (
-	LeafLinks  = "/%v/Hash/Links"
-	LeftLinks  = "Links/0/Hash"
-	CheckLinks = "/%v/Hash"
+	LeafLinksTemplate  = "/%v/Hash/Links"
+	LeftLinksTemplate  = "Links/0/Hash"
+	CheckLinksTemplate = "/%v/Hash"
 )
 
-type ParGSTask struct {
-	Gs           pargraphsync.ParallelGraphExchange
-	AddedTasks   map[string]struct{}
-	StartedTasks map[string]struct{}
-	RunningTasks chan Tasks
-	DoneTasks    map[string]struct{}
-	RootCid      cidlink.Link
-	PeerIds      []peer.AddrInfo
-}
-
-type Task struct {
-	Sel    ipld.Node
-	PeerId peer.ID
-}
-type Tasks struct {
-	Tasks []Task
+type ParallelGraphRequestManger struct {
+	parallelGraphExchange pargraphsync.ParallelGraphExchange
+	collectedRequests     map[string]struct{}
+	runningRequests       map[string]struct{}
+	requestChan           chan []pargraphsync.RequestParam
+	doneRequests          map[string]struct{}
+	rootCid               cidlink.Link
+	peerInfos             []peer.AddrInfo
 }
 
 //todo implement choose
-func (s *ParGSTask) choosePeer() peer.ID {
-	return s.PeerIds[0].ID
+func (s *ParallelGraphRequestManger) choosePeer() peer.ID {
+	return s.peerInfos[0].ID
 }
-func StartParGraphSyncTask(ctx context.Context, gs pargraphsync.ParallelGraphExchange, root cidlink.Link, peerIds []peer.AddrInfo) {
-	var s = ParGSTask{
-		Gs:           gs,
-		AddedTasks:   make(map[string]struct{}),
-		StartedTasks: make(map[string]struct{}),
-		RunningTasks: make(chan Tasks, 1),
-		DoneTasks:    make(map[string]struct{}),
-		RootCid:      root,
-		PeerIds:      peerIds,
+func StartParGraphSyncRequestManger(ctx context.Context, pgs pargraphsync.ParallelGraphExchange, root cidlink.Link, peerIds []peer.AddrInfo) {
+	var s = ParallelGraphRequestManger{
+		parallelGraphExchange: pgs,
+		collectedRequests:     make(map[string]struct{}),
+		runningRequests:       make(map[string]struct{}),
+		requestChan:           make(chan []pargraphsync.RequestParam, 1),
+		doneRequests:          make(map[string]struct{}),
+		rootCid:               root,
+		peerInfos:             peerIds,
 	}
-	task := Task{LeftSelector(""), s.choosePeer()}
-	s.RunningTasks <- Tasks{Tasks: []Task{task}}
+	s.requestChan <- []pargraphsync.RequestParam{{PeerId: s.choosePeer(), Root: root, Selector: LeftSelector("")}}
 	s.StartRun(ctx)
 }
-func (s *ParGSTask) StartRun(ctx context.Context) {
+func (s *ParallelGraphRequestManger) StartRun(ctx context.Context) {
 	for {
 		select {
-		case ta := <-s.RunningTasks:
-			var params []pargraphsync.RequestParam
-			for _, v := range ta.Tasks {
-				params = append(params, pargraphsync.RequestParam{
-					PeerId:   v.PeerId,
-					Root:     s.RootCid,
-					Selector: v.Sel,
-				})
-			}
-			s.run(ctx, params)
+		case request := <-s.requestChan:
+			s.run(ctx, request)
 		default:
-			if !s.divideTasks() {
+			if !s.divideRequests() {
 				s.Close()
 				return
 			}
@@ -78,52 +61,51 @@ func (s *ParGSTask) StartRun(ctx context.Context) {
 	}
 }
 
-func (s *ParGSTask) Close() {
+func (s *ParallelGraphRequestManger) Close() {
 	//todo more action
 	fmt.Println("close")
 }
-func (s *ParGSTask) CollectTasks(pathMap map[string]int64) {
+func (s *ParallelGraphRequestManger) collectRequests(pathMap map[string]int64) {
 	for k, v := range pathMap {
 		for i := int64(0); i < v; i++ {
-			if s.checkNode(k + fmt.Sprintf(CheckLinks, i)) {
+			if s.checkRequests(k + fmt.Sprintf(CheckLinksTemplate, i)) {
 				continue
 			}
-			s.AddedTasks[k+fmt.Sprintf(LeafLinks, i)] = struct{}{}
+			s.collectedRequests[k+fmt.Sprintf(LeafLinksTemplate, i)] = struct{}{}
 		}
 	}
 }
 
-func (s *ParGSTask) divideTasks() bool {
+func (s *ParallelGraphRequestManger) divideRequests() bool {
 	var paths []string
-	for k, v := range s.AddedTasks {
-		s.StartedTasks[k] = v
+	for k, v := range s.collectedRequests {
+		s.runningRequests[k] = v
 		paths = append(paths, k)
-		delete(s.AddedTasks, k)
+		delete(s.collectedRequests, k)
 	}
 	if len(paths) == 0 {
 		return false
 	}
-	s.RunningTasks <- dividePath(paths, s.PeerIds)
+	s.requestChan <- s.dividePaths(paths)
 	return true
 }
 
-func (s *ParGSTask) checkNode(path string) bool {
+func (s *ParallelGraphRequestManger) checkRequests(path string) bool {
 
-	if _, ok := s.AddedTasks[path]; ok {
+	if _, ok := s.collectedRequests[path]; ok {
 		return true
 	}
-	if _, ok := s.StartedTasks[path]; ok {
+	if _, ok := s.runningRequests[path]; ok {
 		return true
 	}
-	if _, ok := s.DoneTasks[path]; ok {
+	if _, ok := s.doneRequests[path]; ok {
 		return true
 	}
 	return false
 }
 
-func (s *ParGSTask) run(ctx context.Context, params []pargraphsync.RequestParam) {
-	// todo collect task
-	responseProgress, errors := s.Gs.RequestMany(ctx, params)
+func (s *ParallelGraphRequestManger) run(ctx context.Context, params []pargraphsync.RequestParam) {
+	responseProgress, errors := s.parallelGraphExchange.RequestMany(ctx, params)
 	go func() {
 		select {
 		case err := <-errors:
@@ -134,10 +116,10 @@ func (s *ParGSTask) run(ctx context.Context, params []pargraphsync.RequestParam)
 	}()
 	pathMap := make(map[string]int64)
 	for blk := range responseProgress {
-		s.DoneTasks[blk.Path.String()] = struct{}{}
-		fmt.Printf("path:%v\n", blk.Path)
+		s.doneRequests[blk.Path.String()] = struct{}{}
+		//fmt.Printf("path:%v\n", blk.Path)
 		if nd, err := blk.Node.LookupByString("Links"); err == nil && nd.Length() != 0 {
-			fmt.Printf("links=%d\n", nd.Length())
+			//fmt.Printf("links=%d\n", nd.Length())
 			if blk.Path.String() == "" {
 				pathMap[blk.Path.String()+"Links"] = nd.Length()
 			} else {
@@ -145,37 +127,40 @@ func (s *ParGSTask) run(ctx context.Context, params []pargraphsync.RequestParam)
 			}
 		}
 	}
-	s.CollectTasks(pathMap)
+	s.collectRequests(pathMap)
 }
 
-func dividePath(paths []string, peerIds []peer.AddrInfo) Tasks {
-	ave := int(math.Ceil(float64(len(paths)) / float64(len(peerIds))))
+func (s *ParallelGraphRequestManger) dividePaths(paths []string) []pargraphsync.RequestParam {
+	ave := int(math.Ceil(float64(len(paths)) / float64(len(s.peerInfos))))
 	var start, end = 0, 0
-	num := len(peerIds)
+	num := len(s.peerInfos)
 	if num > len(paths) {
 		num = len(paths)
 	}
-	var tasks []Task
+	var requests []pargraphsync.RequestParam
 	for i := 0; i < num; i++ {
 		end = start + ave
 		if i == num-1 {
 			end = len(paths)
 		}
 		sel, err := UnionPathSelector(paths[start:end], true)
+		// continue or return
 		if err != nil {
 			continue
 		}
-		tasks = append(tasks, Task{
-			Sel:    sel,
-			PeerId: peerIds[i].ID,
+		// todo should choose idle peer
+		requests = append(requests, pargraphsync.RequestParam{
+			Selector: sel,
+			Root:     s.rootCid,
+			PeerId:   s.peerInfos[i].ID,
 		})
 		start = end
 	}
-	return Tasks{tasks}
+	return requests
 }
 func LeftSelector(path string) ipld.Node {
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
-	selSpec, _ := textselector.SelectorSpecFromPath(LeftLinks, false, ssb.ExploreRecursiveEdge())
+	selSpec, _ := textselector.SelectorSpecFromPath(LeftLinksTemplate, false, ssb.ExploreRecursiveEdge())
 	fromPath, _ := textselector.SelectorSpecFromPath(textselector.Expression(path), false, ssb.ExploreRecursive(selector.RecursionLimitNone(), selSpec))
 	return fromPath.Node()
 }

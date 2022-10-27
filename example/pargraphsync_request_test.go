@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-func TestSelectorParGraphSyncTask(t *testing.T) {
-	util.StartParGraphSyncTask(context.TODO(), bigCarParExchange, cidlink.Link{Cid: bigCarRootCid}, globalAddrInfos)
+func TestParGraphSyncRequestManger(t *testing.T) {
+	util.StartParGraphSyncRequestManger(context.TODO(), bigCarParExchange, cidlink.Link{Cid: bigCarRootCid}, globalAddrInfos)
 }
-func TestSelectorParGraphSyncPath(t *testing.T) {
+func TestParGraphSyncRequestMangerSubtree(t *testing.T) {
 	sel1, err := textselector.SelectorSpecFromPath("Links/2/Hash/", false, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -35,5 +35,5 @@ func TestSelectorParGraphSyncPath(t *testing.T) {
 	}
 	time.Sleep(time.Second)
 	fmt.Println("start")
-	util.StartParGraphSyncTask(context.TODO(), bigCarParExchange, ci, globalAddrInfos)
+	util.StartParGraphSyncRequestManger(context.TODO(), bigCarParExchange, ci, globalAddrInfos)
 }
