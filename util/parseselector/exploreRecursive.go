@@ -162,6 +162,19 @@ func (s ExploreRecursive) Match(node datamodel.Node) (datamodel.Node, error) {
 type exploreRecursiveContext struct {
 	path       string
 	edgesFound int
+	rp         rangePath
+	indexP     indexPath
+}
+type rangePath struct {
+	path        string
+	isRangePath bool
+	start       int64
+	end         int64
+}
+type indexPath struct {
+	path    string
+	isIndex bool
+	index   int64
 }
 
 func (erc *exploreRecursiveContext) Link(s selector.Selector) bool {
@@ -192,7 +205,8 @@ func (er *ERContext) ParseExploreRecursive(n datamodel.Node) (selector.Selector,
 		return nil, fmt.Errorf("selector spec parse rejected: sequence field must be present in ExploreRecursive selector")
 	}
 	erc := &exploreRecursiveContext{}
-	selector1, err := er.ePc.PushParent(erc).ParseSelector(sequence)
+	tmp := er.ePc.PushParent(erc)
+	selector1, err := tmp.ParseSelector(sequence)
 	if err != nil {
 		return nil, err
 	}
@@ -200,6 +214,8 @@ func (er *ERContext) ParseExploreRecursive(n datamodel.Node) (selector.Selector,
 		return nil, fmt.Errorf("selector spec parse rejected: ExploreRecursive must have at least one ExploreRecursiveEdge")
 	}
 	er.collectPath(erc)
+	// todo need check if same
+	er.eCtx = append(er.eCtx, tmp.eCtx...)
 	var stopCondition *selector.Condition
 	stop, err := n.LookupByString(selector.SelectorKey_StopAt)
 	if err == nil {
