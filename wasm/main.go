@@ -1,5 +1,4 @@
 //go:build js && wasm
-// +build js,wasm
 
 package main
 
@@ -30,32 +29,29 @@ func unionPathSelector(this js.Value, args []js.Value) interface{} {
 }
 
 func parseComplexSelectors(this js.Value, args []js.Value) interface{} {
-
 	fmt.Printf("input %s\n", args[0].String())
 	node, err := selectorparse.ParseJSONSelector(args[0].String())
 	parseSelectors, err := parseselector.GenerateSelectors(node)
 	if err != nil {
 		fmt.Printf("unable to generate selectors %s\n", err)
-		return err.Error()
+		return js.ValueOf(err.Error())
 	}
-	var edges, nedges []string
+	var edges, nedges []interface{}
 	for _, n := range parseSelectors {
 		if n.Recursive {
-			edges = append(edges, n.Path)
+			var s strings.Builder
+			dagjson.Encode(n.Sel, &s)
+			edges = append(edges, s.String())
 		} else {
-			nedges = append(nedges, n.Path)
+			var s strings.Builder
+			dagjson.Encode(n.Sel, &s)
+			nedges = append(nedges, s.String())
 		}
-
 	}
-	selectors := struct {
-		edges  []string
-		nedges []string
-	}{
-		edges:  edges,
-		nedges: nedges,
+	return map[string]interface{}{
+		"edges":  edges,
+		"nedges": nedges,
 	}
-	return js.ValueOf(selectors)
-
 }
 func main() {
 	done := make(chan int, 0)
