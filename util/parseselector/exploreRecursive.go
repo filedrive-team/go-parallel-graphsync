@@ -199,12 +199,24 @@ func (er *ERContext) ParseExploreRecursive(n datamodel.Node) (selector.Selector,
 	if erc.edgesFound == 0 {
 		return nil, fmt.Errorf("selector spec parse rejected: ExploreRecursive must have at least one ExploreRecursiveEdge")
 	}
+	expPath := &exploreRecursivePathContext{
+		path:       newPathFromPathSegments(er.ePc.pathSegment),
+		isUnixfs:   er.isUnixfs,
+		notSupport: len(er.ePc.pathSegment) == 0,
+	}
+	limitNone := RecursionLimit{selector.RecursionLimit_None, 0}
+	// only support recursion limit none
+	if limit != limitNone {
+		expPath.notSupport = true
+	}
+	if !expPath.notSupport {
+		expPath.recursive, expPath.notSupport = checkNextSelector(selector1)
+	}
+	er.collectPath(expPath)
 
-	er.collectPath(&exploreRecursivePathContext{
-		path: newPathFromPathSegments(er.ePc.pathSegment),
-	})
-	// todo need check if same
+	// todo need check if same, ??? I don't quite understand what that means.
 	er.eCtx = append(er.eCtx, tmp.eCtx...)
+
 	var stopCondition *selector.Condition
 	stop, err := n.LookupByString(selector.SelectorKey_StopAt)
 	if err == nil {

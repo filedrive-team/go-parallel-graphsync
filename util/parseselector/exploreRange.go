@@ -94,14 +94,7 @@ func (er *ERContext) ParseExploreRange(n datamodel.Node) (selector.Selector, err
 		start: startValue,
 		end:   endValue,
 	}
-	switch sel.(type) {
-	case ExploreRecursive:
-		expPath.recursive = true
-	case selector.Matcher:
-		expPath.recursive = false
-	default:
-		expPath.notSupport = true
-	}
+	expPath.recursive, expPath.notSupport = checkNextSelector(sel)
 	er.collectPath(expPath)
 	return x, nil
 }

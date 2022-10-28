@@ -1,14 +1,15 @@
 package parseselector
 
 import (
+	"errors"
 	"fmt"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/ipld/go-ipld-prime"
+	"github.com/ipld/go-ipld-prime/datamodel"
 	"github.com/ipld/go-ipld-prime/traversal/selector"
+	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
 	textselector "github.com/ipld/go-ipld-selector-text-lite"
 	"strings"
-
-	"github.com/ipld/go-ipld-prime/datamodel"
 )
 
 type ERParseContext struct {
@@ -17,9 +18,17 @@ type ERParseContext struct {
 }
 
 type ERContext struct {
-	eCtx  []ExplorePathContext
-	ePc   ERParseContext
-	union []string
+	eCtx     []ExplorePathContext
+	ePc      ERParseContext
+	union    []string
+	isUnixfs bool
+}
+
+type ParsedSelectors struct {
+	Path      string
+	Sel       ipld.Node
+	IsUnixFS  bool
+	Recursive bool
 }
 
 // ParseSelector creates a Selector from an IPLD Selector Node with the given context
@@ -76,56 +85,19 @@ func (c *ERParseContext) PushLinks(l string) {
 func (er *ERContext) collectPath(erc ExplorePathContext) {
 	paths := erc.Get()
 	if len(paths) > 0 {
-		if strings.HasSuffix(paths[0].Path, "Hash") {
+		if erc.NotSupport() {
 			er.eCtx = append(er.eCtx, erc)
-		}
-		if paths[0].IsUnixFS {
-			er.eCtx = append(er.eCtx, erc)
-		}
-	}
-}
-
-func newPathFromPathSegments(paths []string) string {
-	var ps []datamodel.PathSegment
-	for _, p := range paths {
-		ps = append(ps, datamodel.PathSegmentOfString(p))
-	}
-	return datamodel.NewPath(ps).String()
-}
-
-type ParsedSelectors struct {
-	Path      string
-	Sel       ipld.Node
-	IsUnixFS  bool
-	Recursive bool
-}
-
-func GenerateSelectors(sel ipld.Node) (parsedSelectors []ParsedSelectors, err error) {
-	var er = &ERContext{}
-	_, err = er.ParseSelector(sel)
-	if err != nil {
-		return nil, err
-	}
-	for _, ec := range er.eCtx {
-		paths := ec.Get()
-		for _, ep := range paths {
-			var spec ipld.Node
-			if ep.IsUnixFS {
-				spec = util.UnixFSPathSelectorNotRecursive(ep.Path)
+		} else {
+			if er.isUnixfs {
+				erc.SetRecursive(true)
+				er.eCtx = append(er.eCtx, erc)
+			} else if strings.HasSuffix(paths[0].Path, "Hash") {
+				er.eCtx = append(er.eCtx, erc)
 			} else {
-				spe, _ := textselector.SelectorSpecFromPath(textselector.Expression(ep.Path), false, nil)
-				spec = spe.Node()
+				fmt.Println(erc.Get())
 			}
-
-			parsedSelectors = append(parsedSelectors, ParsedSelectors{
-				Path:      ep.Path,
-				Sel:       spec,
-				IsUnixFS:  ep.IsUnixFS,
-				Recursive: ep.Recursive,
-			})
 		}
 	}
-	return parsedSelectors, nil
 }
 
 // ParseMatcher assembles a Selector
@@ -137,7 +109,8 @@ func (er *ERContext) ParseMatcher(n datamodel.Node) (selector.Selector, error) {
 		return nil, err
 	}
 	er.collectPath(&exploreMatchPathContext{
-		path: newPathFromPathSegments(er.ePc.pathSegment),
+		path:     newPathFromPathSegments(er.ePc.pathSegment),
+		isUnixfs: er.isUnixfs,
 	})
 	return matcher, nil
 }
@@ -167,4 +140,41 @@ func (er *ERContext) ParseExploreUnion(n datamodel.Node) (selector.Selector, err
 		x.Members = append(x.Members, member)
 	}
 	return x, nil
+}
+
+func newPathFromPathSegments(paths []string) string {
+	var ps []datamodel.PathSegment
+	for _, p := range paths {
+		ps = append(ps, datamodel.PathSegmentOfString(p))
+	}
+	return datamodel.NewPath(ps).String()
+}
+
+func GenerateSelectors(sel ipld.Node) (selectors []ParsedSelectors, err error) {
+	er := &ERContext{}
+	_, err = er.ParseSelector(sel)
+	if err != nil {
+		return nil, err
+	}
+	for _, ec := range er.eCtx {
+		if ec.NotSupport() {
+			return nil, errors.New("not support")
+		}
+		paths := ec.Get()
+		for _, ep := range paths {
+			var spec builder.SelectorSpec
+			if ep.IsUnixfs {
+				spec = util.UnixFSPathSelectorSpec(ep.Path, nil)
+			} else {
+				spec, _ = textselector.SelectorSpecFromPath(textselector.Expression(ep.Path), false, nil)
+			}
+			selectors = append(selectors, ParsedSelectors{
+				Path:      ep.Path,
+				Sel:       spec.Node(),
+				IsUnixFS:  ep.IsUnixfs,
+				Recursive: ep.Recursive,
+			})
+		}
+	}
+	return selectors, nil
 }

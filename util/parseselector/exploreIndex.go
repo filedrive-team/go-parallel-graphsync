@@ -68,14 +68,7 @@ func (er *ERContext) ParseExploreIndex(n datamodel.Node) (selector.Selector, err
 		path:  newPathFromPathSegments(er.ePc.pathSegment),
 		index: indexValue,
 	}
-	switch sel.(type) {
-	case ExploreRecursive:
-		expPath.recursive = true
-	case selector.Matcher:
-		expPath.recursive = false
-	default:
-		expPath.notSupport = true
-	}
+	expPath.recursive, expPath.notSupport = checkNextSelector(sel)
 	er.collectPath(expPath)
 	return ExploreIndex{sel, [1]datamodel.PathSegment{datamodel.PathSegmentOfInt(indexValue)}}, nil
 }
