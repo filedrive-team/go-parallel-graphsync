@@ -124,3 +124,19 @@ func CheckIfUnixfsSelector(sel ipld.Node) bool {
 	}
 	return true
 }
+
+// UnixFSPathSelectorNotRecursive creates a selector for a file/path inside of a UnixFS directory not recursive
+// if reification is setup on a link system
+func UnixFSPathSelectorNotRecursive(path string) datamodel.Node {
+	segments := strings.Split(path, "/")
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	selectorSoFar := ssb.Matcher()
+	for i := len(segments) - 1; i >= 0; i-- {
+		selectorSoFar = ssb.ExploreInterpretAs("unixfs",
+			ssb.ExploreFields(func(efsb builder.ExploreFieldsSpecBuilder) {
+				efsb.Insert(segments[i], selectorSoFar)
+			}),
+		)
+	}
+	return selectorSoFar.Node()
+}

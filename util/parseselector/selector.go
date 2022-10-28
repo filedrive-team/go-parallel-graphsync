@@ -2,6 +2,7 @@ package parseselector
 
 import (
 	"fmt"
+	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/ipld/go-ipld-prime"
 	"github.com/ipld/go-ipld-prime/traversal/selector"
 	textselector "github.com/ipld/go-ipld-selector-text-lite"
@@ -54,7 +55,7 @@ func (er *ERContext) ParseSelector(n datamodel.Node) (selector.Selector, error) 
 	case selector.SelectorKey_ExploreRecursiveEdge:
 		return er.ePc.selPc.ParseExploreRecursiveEdge(v)
 	case selector.SelectorKey_ExploreInterpretAs:
-		return er.ePc.selPc.ParseExploreInterpretAs(v)
+		return er.ParseExploreInterpretAs(v)
 	case selector.SelectorKey_Matcher:
 		return er.ParseMatcher(v)
 	default:
@@ -78,6 +79,9 @@ func (er *ERContext) collectPath(erc ExplorePathContext) {
 		if strings.HasSuffix(paths[0].Path, "Hash") {
 			er.eCtx = append(er.eCtx, erc)
 		}
+		if paths[0].IsUnixFS {
+			er.eCtx = append(er.eCtx, erc)
+		}
 	}
 }
 
@@ -89,24 +93,39 @@ func newPathFromPathSegments(paths []string) string {
 	return datamodel.NewPath(ps).String()
 }
 
-func GenerateSelectors(sel ipld.Node) (edge, nedge []ipld.Node, err error) {
+type ParsedSelectors struct {
+	Path      string
+	Sel       ipld.Node
+	IsUnixFS  bool
+	Recursive bool
+}
+
+func GenerateSelectors(sel ipld.Node) (parsedSelectors []ParsedSelectors, err error) {
 	var er = &ERContext{}
 	_, err = er.ParseSelector(sel)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	for _, ec := range er.eCtx {
 		paths := ec.Get()
 		for _, ep := range paths {
-			spec, _ := textselector.SelectorSpecFromPath(textselector.Expression(ep.Path), false, nil)
-			if ep.Recursive {
-				edge = append(edge, spec.Node())
+			var spec ipld.Node
+			if ep.IsUnixFS {
+				spec = util.UnixFSPathSelectorNotRecursive(ep.Path)
 			} else {
-				nedge = append(nedge, spec.Node())
+				spe, _ := textselector.SelectorSpecFromPath(textselector.Expression(ep.Path), false, nil)
+				spec = spe.Node()
 			}
+
+			parsedSelectors = append(parsedSelectors, ParsedSelectors{
+				Path:      ep.Path,
+				Sel:       spec,
+				IsUnixFS:  ep.IsUnixFS,
+				Recursive: ep.Recursive,
+			})
 		}
 	}
-	return edge, nedge, nil
+	return parsedSelectors, nil
 }
 
 // ParseMatcher assembles a Selector

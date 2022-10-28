@@ -7,6 +7,7 @@ import (
 type ExplorePath struct {
 	Path      string
 	Recursive bool
+	IsUnixFS  bool
 }
 
 type ExplorePathContext interface {
@@ -27,6 +28,7 @@ func (erc *exploreRecursivePathContext) Get() []ExplorePath {
 	return []ExplorePath{{
 		Path:      erc.path,
 		Recursive: true,
+		IsUnixFS:  false,
 	},
 	}
 }
@@ -44,6 +46,7 @@ func (emc *exploreMatchPathContext) Get() []ExplorePath {
 	return []ExplorePath{{
 		Path:      emc.path,
 		Recursive: false,
+		IsUnixFS:  false,
 	},
 	}
 }
@@ -63,6 +66,7 @@ func (eic *exploreIndexPathContext) Get() []ExplorePath {
 	return []ExplorePath{{
 		Path:      fmt.Sprintf("%s/%d/Hash", eic.path, eic.index),
 		Recursive: eic.recursive,
+		IsUnixFS:  false,
 	},
 	}
 }
@@ -88,4 +92,25 @@ func (erc *exploreRangePathContext) Get() []ExplorePath {
 		})
 	}
 	return paths
+}
+
+type exploreUnixFSPathContext struct {
+	path       string
+	recursive  bool
+	notSupport bool
+}
+
+func (erc *exploreUnixFSPathContext) NotSupport() bool {
+	return erc.notSupport
+}
+
+func (erc *exploreUnixFSPathContext) Get() []ExplorePath {
+
+	return []ExplorePath{
+		{
+			Path:      erc.path,
+			Recursive: erc.recursive,
+			IsUnixFS:  true,
+		},
+	}
 }
