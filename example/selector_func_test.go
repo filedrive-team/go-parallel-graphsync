@@ -6,7 +6,12 @@ import (
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/filedrive-team/go-parallel-graphsync/util/parseselector"
+	"github.com/ipfs/go-cid"
+	"github.com/ipfs/go-datastore"
+	dssync "github.com/ipfs/go-datastore/sync"
 	"github.com/ipfs/go-graphsync"
+	blockstore "github.com/ipfs/go-ipfs-blockstore"
+	"github.com/ipfs/go-unixfsnode"
 	"github.com/ipld/go-ipld-prime"
 	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
@@ -272,12 +277,12 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 			var sss strings.Builder
 			dagjson.Encode(tc.selRes, &sss)
 			fmt.Println(sss.String())
-			parsedSelectors, err := parseselector.GenerateSelectors(tc.selRes)
+			parsed, err := parseselector.GenerateSelectors(tc.selRes)
 			if err != nil {
 				return
 			}
 			var cids []string
-			for i, ne := range parsedSelectors {
+			for i, ne := range parsed {
 				responseProgress, errors := bigCarParExchange.Request(context.TODO(), bigCarAddrInfos[i%3].ID, cidlink.Link{Cid: bigCarRootCid}, ne.Sel)
 				go func() {
 					select {
@@ -294,6 +299,90 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 						cids = append(cids, blk.LastBlock.Link.String())
 					}
 				}
+			}
+			if !pathInPath(cids, tc.cids) {
+				t.Fatal("fail")
+			}
+		})
+
+	}
+}
+
+func TestSimpleParseGivenUnixFSSelector(t *testing.T) {
+	serverbs, err := loadCarV2Blockstore("./test.car")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, _ := cid.Parse("QmfDBQsFWphnYYxjdAjqnqhV1fWzH7DKKamPnC1rdXupma")
+	mainCtx := context.TODO()
+	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9236, serverbs, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyFile := path.Join(os.TempDir(), "gs-unixfs-key")
+	ds := datastore.NewMapDatastore()
+	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
+
+	host, gscli, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9241", keyFile, bs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gscli.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
+		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
+	})
+
+	host.Peerstore().AddAddr(addrInfos[0].ID, addrInfos[0].Addrs[0], peerstore.PermanentAddrTTL)
+	//sel := util.UnixFSPathSelectorNotRecursive("1.jpg")
+	//"fixtures/loremfolder/subfolder/lorem.txt"
+	sel := unixfsnode.UnixFSPathSelector("video2507292463.mp4.bak.mp4")
+	//sel := unixfsnode.UnixFSPathSelector("1.jpg")
+	var s strings.Builder
+	dagjson.Encode(sel, &s)
+	t.Logf(s.String())
+	//todo more testcase
+	testCases := []struct {
+		name     string
+		selRes   ipld.Node
+		resPaths string
+		cids     []string
+	}{
+		{
+			name:     "unixfs",
+			selRes:   sel,
+			resPaths: "video2507292463.mp4.bak.mp4",
+			cids: []string{
+				"QmeZd6zzw3JbB2eDNwrhZpPzpYd4gLbcenJuNhw9ghoMUo",
+			},
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			parsed, err := parseselector.GenerateSelectors(tc.selRes)
+			if err != nil {
+				return
+			}
+			var cids []string
+			for _, ne := range parsed {
+				var sss strings.Builder
+				dagjson.Encode(ne.Sel, &sss)
+				fmt.Println(sss.String())
+				responseProgress, errors := gscli.Request(context.TODO(), addrInfos[0].ID, cidlink.Link{Cid: root}, ne.Sel)
+				go func() {
+					select {
+					case err := <-errors:
+						if err != nil {
+							t.Fatal(err)
+						}
+					}
+				}()
+
+				for blk := range responseProgress {
+					fmt.Printf("unixfs path=%s\n", blk.Path.String())
+					if blk.Path.String() == tc.resPaths {
+						cids = append(cids, blk.LastBlock.Link.String())
+					}
+				}
+
 			}
 			if !pathInPath(cids, tc.cids) {
 				t.Fatal("fail")

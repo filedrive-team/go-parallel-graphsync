@@ -3,6 +3,8 @@ package parseselector
 import (
 	"fmt"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
+	"github.com/ipfs/go-unixfsnode"
+	"github.com/ipld/go-ipld-prime"
 	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
 	"github.com/ipld/go-ipld-prime/traversal"
@@ -45,87 +47,95 @@ func TestParseSelector(t *testing.T) {
 
 	selRange, _ := util.GenerateSubRangeSelectorSpec("", 1, 3)
 	path3, _ := util.GenerateDataSelectorSpec("Links/3/Hash", true, nil)
-	selUnionRange := ssb.ExploreUnion(selRange, path3)
+	selUnionRange := ssb.ExploreUnion(selRange, path3).Node()
 
 	selIndex := ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
 		specBuilder.Insert("Links", ssb.ExploreIndex(0, ssb.ExploreRecursive(selector.RecursionLimitNone(),
 			ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())))))
 	})
+	selUnixfs := unixfsnode.UnixFSPathSelector("a.txt")
 
 	testCases := []struct {
 		name     string
-		selRes   builder.SelectorSpec
+		selRes   ipld.Node
 		resPaths []ExplorePath
 	}{
 		{
 			name:   "same-depth",
-			selRes: selSameDepth,
+			selRes: selSameDepth.Node(),
 			resPaths: []ExplorePath{
-				{"Links/0/Hash", false},
-				{"Links/1/Hash", true},
+				{"Links/0/Hash", false, false},
+				{"Links/1/Hash", true, false},
 			},
 		},
 		{
 			name:   "diff-depth",
-			selRes: selDiffDepth,
+			selRes: selDiffDepth.Node(),
 			resPaths: []ExplorePath{
-				{"Links/0/Hash/Links/0/Hash", false},
-				{"Links/3/Hash", true},
+				{"Links/0/Hash/Links/0/Hash", false, false},
+				{"Links/3/Hash", true, false},
 			},
 		},
 		{
 			name:   "diff-depth & same-path",
-			selRes: selDiffSamePath,
+			selRes: selDiffSamePath.Node(),
 			resPaths: []ExplorePath{
-				{"Links/0/Hash/Links/0/Hash", false},
-				{"Links/0/Hash/Links/1/Hash", true},
-				{"Links/3/Hash", true},
+				{"Links/0/Hash/Links/0/Hash", false, false},
+				{"Links/0/Hash/Links/1/Hash", true, false},
+				{"Links/3/Hash", true, false},
 			},
 		},
 		{
 			name:   "more",
-			selRes: selMore,
+			selRes: selMore.Node(),
 			resPaths: []ExplorePath{
-				{"Links/0/Hash/Links/0/Hash", false},
-				{"Links/0/Hash/Links/1/Hash", true},
-				{"Links/0/Hash/Links/2/Hash", true},
-				{"Links/2/Hash/Links/2/Hash", true},
-				{"Links/4/Hash/Links/1/Hash", true},
-				{"Links/3/Hash", true},
+				{"Links/0/Hash/Links/0/Hash", false, false},
+				{"Links/0/Hash/Links/1/Hash", true, false},
+				{"Links/0/Hash/Links/2/Hash", true, false},
+				{"Links/2/Hash/Links/2/Hash", true, false},
+				{"Links/4/Hash/Links/1/Hash", true, false},
+				{"Links/3/Hash", true, false},
 			},
 		},
 		{
 			name:   "union-union",
-			selRes: selU2,
+			selRes: selU2.Node(),
 			resPaths: []ExplorePath{
-				{"Links/0/Hash/Links/1/Hash/Links/0/Hash", false},
-				{"Links/0/Hash/Links/1/Hash/Links/1/Hash", true},
-				{"Links/0/Hash/Links/0/Hash", false},
-				{"Links/3/Hash", true},
+				{"Links/0/Hash/Links/1/Hash/Links/0/Hash", false, false},
+				{"Links/0/Hash/Links/1/Hash/Links/1/Hash", true, false},
+				{"Links/0/Hash/Links/0/Hash", false, false},
+				{"Links/3/Hash", true, false},
 			},
 		},
 		{
 			name:   "range",
-			selRes: selRange,
+			selRes: selRange.Node(),
 			resPaths: []ExplorePath{
-				{"Links/1/Hash", true},
-				{"Links/2/Hash", true},
+				{"Links/1/Hash", true, false},
+				{"Links/2/Hash", true, false},
 			},
 		},
 		{
 			name:   "union-range",
 			selRes: selUnionRange,
 			resPaths: []ExplorePath{
-				{"Links/1/Hash", true},
-				{"Links/2/Hash", true},
-				{"Links/3/Hash", true},
+				{"Links/1/Hash", true, false},
+				{"Links/2/Hash", true, false},
+				{"Links/3/Hash", true, false},
 			},
 		},
 		{
 			name:   "index",
-			selRes: selIndex,
+			selRes: selIndex.Node(),
 			resPaths: []ExplorePath{
-				{"Links/0/Hash", true},
+				{"Links/0/Hash", true, false},
+			},
+		},
+		{
+			name:   "unixfs",
+			selRes: selUnixfs,
+			resPaths: []ExplorePath{
+				{"a.txt", false, true},
 			},
 		},
 	}
@@ -137,10 +147,10 @@ func TestParseSelector(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(s *testing.T) {
 			var str strings.Builder
-			dagjson.Encode(tc.selRes.Node(), &str)
+			dagjson.Encode(tc.selRes, &str)
 			fmt.Println(str.String())
 			var er = &ERContext{}
-			_, err := er.ParseSelector(tc.selRes.Node())
+			_, err := er.ParseSelector(tc.selRes)
 			if err != nil {
 				t.Fatal(err)
 			}
