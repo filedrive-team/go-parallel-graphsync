@@ -89,7 +89,6 @@ func (er *ERContext) collectPath(erc ExplorePathContext) {
 			er.eCtx = append(er.eCtx, erc)
 		} else {
 			if er.isUnixfs {
-				erc.SetRecursive(true)
 				er.eCtx = append(er.eCtx, erc)
 			} else if strings.HasSuffix(paths[0].Path, "Hash") {
 				er.eCtx = append(er.eCtx, erc)
@@ -164,7 +163,7 @@ func GenerateSelectors(sel ipld.Node) (selectors []ParsedSelectors, err error) {
 		for _, ep := range paths {
 			var spec builder.SelectorSpec
 			if ep.IsUnixfs {
-				spec = util.UnixFSPathSelectorSpec(ep.Path, nil)
+				spec = util.UnixFSPathSelectorNotRecursive(ep.Path)
 			} else {
 				spec, _ = textselector.SelectorSpecFromPath(textselector.Expression(ep.Path), false, nil)
 			}
