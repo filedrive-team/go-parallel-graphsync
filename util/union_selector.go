@@ -120,27 +120,6 @@ func (t *trie) walks(nd *trieNode, visit func(name string, nd *trieNode) bool) {
 	return
 }
 
-// UnixFSPathSelectorSpec creates a selector for a file/path inside of a UnixFS directory
-// if reification is setup on a link system
-func UnixFSPathSelectorSpec(path string, optionalSubselectorAtTarget builder.SelectorSpec) builder.SelectorSpec {
-	segments := strings.Split(path, "/")
-	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
-	ss := optionalSubselectorAtTarget
-	// if nothing is given - use an exact matcher
-	if ss == nil {
-		ss = ssb.Matcher()
-	}
-	selectorSoFar := ssb.ExploreInterpretAs("unixfs", ss)
-	for i := len(segments) - 1; i >= 0; i-- {
-		selectorSoFar = ssb.ExploreInterpretAs("unixfs",
-			ssb.ExploreFields(func(efsb builder.ExploreFieldsSpecBuilder) {
-				efsb.Insert(segments[i], selectorSoFar)
-			}),
-		)
-	}
-	return selectorSoFar
-}
-
 func UnionPathSelector(paths []string, isLeft bool) (ipld.Node, error) {
 	if len(paths) < 1 {
 		return nil, fmt.Errorf("paths should not be nil")

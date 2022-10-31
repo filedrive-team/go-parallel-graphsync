@@ -58,6 +58,10 @@ func (er *ERContext) ParseExploreInterpretAs(n datamodel.Node) (selector.Selecto
 	if err != nil {
 		return nil, fmt.Errorf("selector spec parse rejected: the 'next' field must be present in ExploreInterpretAs clause")
 	}
+	parseSelector, err := selector.ParseSelector(next)
+	if err != nil {
+		return nil, err
+	}
 	sel, err := er.ParseSelector(next)
 	if err != nil {
 		return nil, err
@@ -67,31 +71,30 @@ func (er *ERContext) ParseExploreInterpretAs(n datamodel.Node) (selector.Selecto
 		return nil, err
 	}
 	if adl == "unixfs" {
-		expPath := &exploreUnixFSPathContext{
-			path: newPathFromPathSegments(er.ePc.pathSegment),
-		}
-		switch sel.(type) {
-		case ExploreRecursive:
-			expPath.recursive = true
-		case selector.Matcher:
-			expPath.recursive = false
-		default:
-			expPath.notSupport = true
-		}
-		// more efficient check
-		collect := true
-		for _, ectx := range er.eCtx {
-			paths := ectx.Get()
-			for _, pa := range paths {
-				if pa.Path == expPath.path {
-					collect = false
-				}
-			}
-		}
-		if collect {
-			er.collectPath(expPath)
-		}
+		er.collectUnixFSPath(parseSelector)
 	}
 
 	return ExploreInterpretAs{sel, adl}, nil
+}
+func (er *ERContext) collectUnixFSPath(next selector.Selector) {
+	recursive, notSupport := checkNextSelector(next)
+	expPath := &exploreUnixFSPathContext{
+		path:       newPathFromPathSegments(er.ePc.pathSegment),
+		recursive:  recursive,
+		notSupport: notSupport,
+	}
+	// more efficient check
+	collect := true
+	for _, ectx := range er.eCtx {
+		paths := ectx.Get()
+		for _, pa := range paths {
+			if pa.Path == expPath.path {
+				collect = false
+			}
+		}
+	}
+	if collect {
+		er.isUnixfs = true
+		er.collectPath(expPath)
+	}
 }
