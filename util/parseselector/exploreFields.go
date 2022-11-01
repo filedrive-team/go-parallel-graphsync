@@ -72,6 +72,10 @@ func (er *ERContext) ParseExploreFields(n datamodel.Node) (selector.Selector, er
 
 		kstr, _ := kn.AsString()
 		er.ePc.PushLinks(kstr)
+		//Is it a valid judgment?
+		if kstr == "Hash" {
+			er.isUnixfs = false
+		}
 		x.interests = append(x.interests, datamodel.PathSegmentOfString(kstr))
 		x.selections[kstr], err = er.ParseSelector(v)
 		if err != nil {

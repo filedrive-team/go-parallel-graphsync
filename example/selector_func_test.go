@@ -11,7 +11,6 @@ import (
 	dssync "github.com/ipfs/go-datastore/sync"
 	"github.com/ipfs/go-graphsync"
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
-	"github.com/ipfs/go-unixfsnode"
 	"github.com/ipld/go-ipld-prime"
 	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
@@ -333,10 +332,13 @@ func TestSimpleParseGivenUnixFSSelector(t *testing.T) {
 	host.Peerstore().AddAddr(addrInfos[0].ID, addrInfos[0].Addrs[0], peerstore.PermanentAddrTTL)
 	//sel := util.UnixFSPathSelectorNotRecursive("1.jpg")
 	//"fixtures/loremfolder/subfolder/lorem.txt"
-	sel := unixfsnode.UnixFSPathSelector("video2507292463.mp4.bak.mp4")
+	sel1 := util.UnixFSPathSelectorSpec("video2507292463.mp4.bak.mp4", nil)
+	sel2, _ := textselector.SelectorSpecFromPath("Links/1/Hash", false, nil)
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	sel := ssb.ExploreUnion(sel1, sel2)
 	//sel := unixfsnode.UnixFSPathSelector("1.jpg")
 	var s strings.Builder
-	dagjson.Encode(sel, &s)
+	dagjson.Encode(sel.Node(), &s)
 	t.Logf(s.String())
 	//todo more testcase
 	testCases := []struct {
@@ -347,7 +349,15 @@ func TestSimpleParseGivenUnixFSSelector(t *testing.T) {
 	}{
 		{
 			name:     "unixfs",
-			selRes:   sel,
+			selRes:   sel1.Node(),
+			resPaths: "video2507292463.mp4.bak.mp4",
+			cids: []string{
+				"QmeZd6zzw3JbB2eDNwrhZpPzpYd4gLbcenJuNhw9ghoMUo",
+			},
+		},
+		{
+			name:     "unixfs-Links",
+			selRes:   sel.Node(),
 			resPaths: "video2507292463.mp4.bak.mp4",
 			cids: []string{
 				"QmeZd6zzw3JbB2eDNwrhZpPzpYd4gLbcenJuNhw9ghoMUo",

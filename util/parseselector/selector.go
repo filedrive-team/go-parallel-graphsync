@@ -89,6 +89,7 @@ func (er *ERContext) collectPath(erc ExplorePathContext) {
 			er.eCtx = append(er.eCtx, erc)
 		} else {
 			if er.isUnixfs {
+				erc.SetRecursive(true)
 				er.eCtx = append(er.eCtx, erc)
 			} else if strings.HasSuffix(paths[0].Path, "Hash") {
 				er.eCtx = append(er.eCtx, erc)
