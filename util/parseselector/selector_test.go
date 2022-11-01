@@ -163,7 +163,7 @@ func TestParseSelector(t *testing.T) {
 			name:   "unixfs",
 			selRes: selUnix,
 			resPaths: []ExplorePath{
-				{Path: "dir/a.jpg", Recursive: false, IsUnixfs: true},
+				{Path: "dir/a.jpg", Recursive: true, IsUnixfs: true},
 			},
 		},
 		{
