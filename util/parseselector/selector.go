@@ -20,7 +20,6 @@ type ERParseContext struct {
 type ERContext struct {
 	eCtx     []ExplorePathContext
 	ePc      ERParseContext
-	union    []string
 	isUnixfs bool
 }
 
@@ -56,8 +55,6 @@ func (er *ERContext) ParseSelector(n datamodel.Node) (selector.Selector, error) 
 	case selector.SelectorKey_ExploreRange:
 		return er.ParseExploreRange(v)
 	case selector.SelectorKey_ExploreUnion:
-		er.union = er.ePc.pathSegment
-		//fmt.Println("|||", er.pc.path)
 		return er.ParseExploreUnion(v)
 	case selector.SelectorKey_ExploreRecursive:
 		return er.ParseExploreRecursive(v)
@@ -124,7 +121,7 @@ func (er *ERContext) ParseExploreUnion(n datamodel.Node) (selector.Selector, err
 	x := selector.ExploreUnion{
 		Members: make([]selector.Selector, 0, n.Length()),
 	}
-	pa := er.union
+	top := er.ePc.pathSegment
 	for itr := n.ListIterator(); !itr.Done(); {
 		_, v, err := itr.Next()
 		if err != nil {
@@ -134,9 +131,8 @@ func (er *ERContext) ParseExploreUnion(n datamodel.Node) (selector.Selector, err
 		if err != nil {
 			return nil, err
 		}
-		//clear store path
-		er.ePc.pathSegment = nil
-		er.ePc.pathSegment = append(er.ePc.pathSegment, pa...)
+		// restore path
+		er.ePc.pathSegment = top
 		x.Members = append(x.Members, member)
 	}
 	return x, nil

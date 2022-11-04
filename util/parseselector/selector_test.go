@@ -76,29 +76,29 @@ func TestParseSelector(t *testing.T) {
 
 	testCases := []struct {
 		name       string
-		selRes     builder.SelectorSpec
+		srcSelSpec builder.SelectorSpec
 		resPaths   []ExplorePath
 		notSupport bool
 	}{
 		{
-			name:   "same-depth",
-			selRes: selSameDepth,
+			name:       "same-depth",
+			srcSelSpec: selSameDepth,
 			resPaths: []ExplorePath{
 				{Path: "Links/0/Hash", Recursive: false},
 				{Path: "Links/1/Hash", Recursive: true},
 			},
 		},
 		{
-			name:   "diff-depth",
-			selRes: selDiffDepth,
+			name:       "diff-depth",
+			srcSelSpec: selDiffDepth,
 			resPaths: []ExplorePath{
 				{Path: "Links/0/Hash/Links/0/Hash", Recursive: false},
 				{Path: "Links/3/Hash", Recursive: true},
 			},
 		},
 		{
-			name:   "diff-depth & same-path",
-			selRes: selDiffSamePath,
+			name:       "diff-depth & same-path",
+			srcSelSpec: selDiffSamePath,
 			resPaths: []ExplorePath{
 				{Path: "Links/0/Hash/Links/0/Hash", Recursive: false},
 				{Path: "Links/0/Hash/Links/1/Hash", Recursive: true},
@@ -106,8 +106,8 @@ func TestParseSelector(t *testing.T) {
 			},
 		},
 		{
-			name:   "more",
-			selRes: selMore,
+			name:       "more",
+			srcSelSpec: selMore,
 			resPaths: []ExplorePath{
 				{Path: "Links/0/Hash/Links/0/Hash", Recursive: false},
 				{Path: "Links/0/Hash/Links/1/Hash", Recursive: true},
@@ -118,8 +118,8 @@ func TestParseSelector(t *testing.T) {
 			},
 		},
 		{
-			name:   "union-union",
-			selRes: selU2,
+			name:       "union-union",
+			srcSelSpec: selU2,
 			resPaths: []ExplorePath{
 				{Path: "Links/0/Hash/Links/1/Hash/Links/0/Hash", Recursive: false},
 				{Path: "Links/0/Hash/Links/1/Hash/Links/1/Hash", Recursive: true},
@@ -128,16 +128,16 @@ func TestParseSelector(t *testing.T) {
 			},
 		},
 		{
-			name:   "range",
-			selRes: selRange,
+			name:       "range",
+			srcSelSpec: selRange,
 			resPaths: []ExplorePath{
 				{Path: "Links/1/Hash", Recursive: true},
 				{Path: "Links/2/Hash", Recursive: true},
 			},
 		},
 		{
-			name:   "union-range",
-			selRes: selUnionRange,
+			name:       "union-range",
+			srcSelSpec: selUnionRange,
 			resPaths: []ExplorePath{
 				{Path: "Links/1/Hash", Recursive: true},
 				{Path: "Links/2/Hash", Recursive: true},
@@ -145,42 +145,42 @@ func TestParseSelector(t *testing.T) {
 			},
 		},
 		{
-			name:   "index",
-			selRes: selIndex,
+			name:       "index",
+			srcSelSpec: selIndex,
 			resPaths: []ExplorePath{
 				{Path: "Links/0/Hash", Recursive: true},
 			},
 		},
 		{
-			name:   "union-index",
-			selRes: selUnionIndex,
+			name:       "union-index",
+			srcSelSpec: selUnionIndex,
 			resPaths: []ExplorePath{
 				{Path: "Links/0/Hash", Recursive: true},
 				{Path: "Links/5/Hash", Recursive: true},
 			},
 		},
 		{
-			name:   "unixfs",
-			selRes: selUnix,
+			name:       "unixfs",
+			srcSelSpec: selUnix,
 			resPaths: []ExplorePath{
 				{Path: "dir/a.jpg", Recursive: true, IsUnixfs: true},
 			},
 		},
 		{
 			name:       "not-support-index",
-			selRes:     selLeft,
+			srcSelSpec: selLeft,
 			resPaths:   nil,
 			notSupport: true,
 		},
 		{
 			name:       "not-support-range",
-			selRes:     selRecursiveRange,
+			srcSelSpec: selRecursiveRange,
 			resPaths:   nil,
 			notSupport: true,
 		},
 		{
 			name:       "not-support-limit",
-			selRes:     selLimit,
+			srcSelSpec: selLimit,
 			resPaths:   nil,
 			notSupport: true,
 		},
@@ -188,10 +188,10 @@ func TestParseSelector(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(s *testing.T) {
 			var str strings.Builder
-			dagjson.Encode(tc.selRes.Node(), &str)
+			dagjson.Encode(tc.srcSelSpec.Node(), &str)
 			fmt.Println(str.String())
 			er := &ERContext{}
-			_, err := er.ParseSelector(tc.selRes.Node())
+			_, err := er.ParseSelector(tc.srcSelSpec.Node())
 			if err != nil {
 				t.Fatal(err)
 			}
