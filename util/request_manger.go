@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
+	"github.com/filedrive-team/go-parallel-graphsync/gsrespserver"
 	"github.com/ipld/go-ipld-prime"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
@@ -12,7 +13,6 @@ import (
 	textselector "github.com/ipld/go-ipld-selector-text-lite"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"math"
-	"sync"
 )
 
 const (
@@ -28,34 +28,8 @@ type ParallelGraphRequestManger struct {
 	requestChan           chan []pargraphsync.RequestParam
 	doneRequests          map[string]struct{}
 	rootCid               cidlink.Link
-	parallelGraphServers  map[string]*ParallelGraphServer
-}
-
-type ParallelGraphServer struct {
-	lock      sync.Mutex
-	dealCount int
-	//todo more about server info
-	addrInfo peer.AddrInfo
-}
-
-func (s *ParallelGraphRequestManger) ChoosePeer() peer.ID {
-	//todo implement more about choose eg:latency and transfer speed
-	var dealCount = 1000
-	var peerId peer.ID
-	var pgs *ParallelGraphServer
-	// todo check latency and transfer speed
-	for _, pgDServer := range s.parallelGraphServers {
-		if pgDServer.dealCount < dealCount {
-			dealCount = pgDServer.dealCount
-			peerId = pgDServer.addrInfo.ID
-			pgDServer.dealCount++
-			pgs = pgDServer
-		}
-	}
-	s.parallelGraphServers[peerId.String()].lock.Lock()
-	s.parallelGraphServers[peerId.String()] = pgs
-	s.parallelGraphServers[peerId.String()].lock.Unlock()
-	return peerId
+	errors                chan error
+	parallelGraphServers  *gsrespserver.ParallelGraphServerManger
 }
 
 // StartParGraphSyncRequestManger
@@ -69,31 +43,26 @@ func StartParGraphSyncRequestManger(ctx context.Context, pgs pargraphsync.Parall
 		requestChan:           make(chan []pargraphsync.RequestParam, 1),
 		doneRequests:          make(map[string]struct{}),
 		rootCid:               root,
-		parallelGraphServers:  addrInfoToParallelGraphServers(infos),
+		parallelGraphServers:  gsrespserver.NewParallelGraphServerManger(infos),
 	}
-	s.requestChan <- []pargraphsync.RequestParam{{PeerId: s.ChoosePeer(), Root: root, Selector: LeftSelector("")}}
+	s.requestChan <- []pargraphsync.RequestParam{{PeerId: s.parallelGraphServers.GetIdlePeer(ctx), Root: root, Selector: LeftSelector("")}}
 	s.StartRun(ctx)
-}
-func addrInfoToParallelGraphServers(infos []peer.AddrInfo) map[string]*ParallelGraphServer {
-	parallelGraphServers := make(map[string]*ParallelGraphServer)
-	for _, info := range infos {
-		parallelGraphServers[info.ID.String()] = &ParallelGraphServer{
-			dealCount: 0,
-			addrInfo:  info,
-		}
-	}
-	return parallelGraphServers
 }
 
 // StartRun you can also build a ParallelGraphRequestManger yourself and use this method to synchronize
 func (s *ParallelGraphRequestManger) StartRun(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
 	for {
 		select {
 		case request := <-s.requestChan:
 			s.run(ctx, request)
+		case err := <-s.errors:
+			if err != nil {
+				cancel()
+			}
 		default:
-			if !s.divideRequests() {
-				s.Close()
+			if !s.divideRequests(ctx) {
+				s.Close(cancel)
 				return
 			}
 		}
@@ -101,8 +70,9 @@ func (s *ParallelGraphRequestManger) StartRun(ctx context.Context) {
 }
 
 // Close the Manger
-func (s *ParallelGraphRequestManger) Close() {
+func (s *ParallelGraphRequestManger) Close(cancel context.CancelFunc) {
 	//todo more action
+	cancel()
 	fmt.Println("close")
 }
 func (s *ParallelGraphRequestManger) collectRequests(pathMap map[string]int64) {
@@ -116,7 +86,7 @@ func (s *ParallelGraphRequestManger) collectRequests(pathMap map[string]int64) {
 	}
 }
 
-func (s *ParallelGraphRequestManger) divideRequests() bool {
+func (s *ParallelGraphRequestManger) divideRequests(ctx context.Context) bool {
 	var paths []string
 	for k, v := range s.collectedRequests {
 		s.runningRequests[k] = v
@@ -126,7 +96,7 @@ func (s *ParallelGraphRequestManger) divideRequests() bool {
 	if len(paths) == 0 {
 		return false
 	}
-	s.requestChan <- s.dividePaths(paths)
+	s.requestChan <- s.dividePaths(ctx, paths)
 	return true
 }
 
@@ -167,21 +137,14 @@ func (s *ParallelGraphRequestManger) run(ctx context.Context, params []pargraphs
 			}
 		}
 	}
-	s.freeParallelGraphServer(params)
+	s.parallelGraphServers.FreeDealCount(ctx, params)
 	s.collectRequests(pathMap)
 }
-func (s *ParallelGraphRequestManger) freeParallelGraphServer(params []pargraphsync.RequestParam) {
-	for _, param := range params {
-		s.parallelGraphServers[param.PeerId.String()].lock.Lock()
-		s.parallelGraphServers[param.PeerId.String()].dealCount--
-		s.parallelGraphServers[param.PeerId.String()].lock.Unlock()
-	}
-}
 
-func (s *ParallelGraphRequestManger) dividePaths(paths []string) []pargraphsync.RequestParam {
-	ave := int(math.Ceil(float64(len(paths)) / float64(len(s.parallelGraphServers))))
+func (s *ParallelGraphRequestManger) dividePaths(ctx context.Context, paths []string) []pargraphsync.RequestParam {
+	ave := Ceil(len(paths), s.parallelGraphServers.GetPeerCount(ctx))
 	var start, end = 0, 0
-	num := len(s.parallelGraphServers)
+	num := s.parallelGraphServers.GetPeerCount(ctx)
 	if num > len(paths) {
 		num = len(paths)
 	}
@@ -199,7 +162,7 @@ func (s *ParallelGraphRequestManger) dividePaths(paths []string) []pargraphsync.
 		requests = append(requests, pargraphsync.RequestParam{
 			Selector: sel,
 			Root:     s.rootCid,
-			PeerId:   s.ChoosePeer(),
+			PeerId:   s.parallelGraphServers.GetIdlePeer(ctx),
 		})
 		start = end
 	}
@@ -210,4 +173,7 @@ func LeftSelector(path string) ipld.Node {
 	selSpec, _ := textselector.SelectorSpecFromPath(LeftLinks, false, ssb.ExploreRecursiveEdge())
 	fromPath, _ := textselector.SelectorSpecFromPath(textselector.Expression(path), false, ssb.ExploreRecursive(selector.RecursionLimitNone(), selSpec))
 	return fromPath.Node()
+}
+func Ceil(x, y int) int {
+	return int(math.Ceil(float64(x) / float64(y)))
 }
