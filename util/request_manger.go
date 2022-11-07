@@ -58,6 +58,7 @@ func (s *ParallelGraphRequestManger) StartRun(ctx context.Context) {
 			s.run(ctx, request)
 		case err := <-s.errors:
 			if err != nil {
+				fmt.Printf("request error: %v\n", err)
 				cancel()
 			}
 		default:
@@ -157,7 +158,7 @@ func (s *ParallelGraphRequestManger) dividePaths(ctx context.Context, paths []st
 		sel, err := UnionPathSelector(paths[start:end], true)
 		// continue or return
 		if err != nil {
-			continue
+			s.errors <- err
 		}
 		requests = append(requests, pargraphsync.RequestParam{
 			Selector: sel,
