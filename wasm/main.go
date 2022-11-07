@@ -1,4 +1,5 @@
 //go:build js && wasm
+// +build js,wasm
 
 package main
 
@@ -18,7 +19,7 @@ func unionPathSelector(this js.Value, args []js.Value) interface{} {
 		input = append(input, a.String())
 	}
 	fmt.Printf("input %s\n", input)
-	node, err := util.UnionPathSelector(input, false)
+	node, err := util.UnionPathSelectorWeb(input, false)
 	if err != nil {
 		fmt.Printf("unable to union path to selector %s\n", err)
 		return err.Error()
