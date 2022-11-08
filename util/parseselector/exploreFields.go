@@ -46,9 +46,7 @@ func (s ExploreFields) Match(node datamodel.Node) (datamodel.Node, error) {
 
 // ParseExploreFields assembles a Selector
 // from a ExploreFields selector node
-func (er *ERContext) ParseExploreFields(n datamodel.Node) (selector.Selector, error) {
-
-	//selec, err := er.ePc.selPc.ParseExploreFields(n)
+func (er *ERParseContext) ParseExploreFields(n datamodel.Node) (selector.Selector, error) {
 	if n.Kind() != datamodel.Kind_Map {
 		return nil, fmt.Errorf("selector spec parse rejected: selector body must be a map")
 	}
@@ -71,7 +69,11 @@ func (er *ERContext) ParseExploreFields(n datamodel.Node) (selector.Selector, er
 		}
 
 		kstr, _ := kn.AsString()
-		er.ePc.PushLinks(kstr)
+		er.PushPathSegment(kstr)
+		//Is it a valid judgment?
+		if kstr == "Hash" || kstr == "Links" {
+			er.isUnixfs = false
+		}
 		x.interests = append(x.interests, datamodel.PathSegmentOfString(kstr))
 		x.selections[kstr], err = er.ParseSelector(v)
 		if err != nil {

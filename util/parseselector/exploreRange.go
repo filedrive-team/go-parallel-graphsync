@@ -48,7 +48,7 @@ func (s ExploreRange) Match(node datamodel.Node) (datamodel.Node, error) {
 
 // ParseExploreRange assembles a Selector
 // from a ExploreRange selector node
-func (er *ERContext) ParseExploreRange(n datamodel.Node) (selector.Selector, error) {
+func (er *ERParseContext) ParseExploreRange(n datamodel.Node) (selector.Selector, error) {
 	if n.Kind() != datamodel.Kind_Map {
 		return nil, fmt.Errorf("selector spec parse rejected: selector body must be a map")
 	}
@@ -90,7 +90,7 @@ func (er *ERContext) ParseExploreRange(n datamodel.Node) (selector.Selector, err
 		x.interest = append(x.interest, datamodel.PathSegmentOfInt(i))
 	}
 	expPath := &exploreRangePathContext{
-		path:  newPathFromPathSegments(er.ePc.pathSegment),
+		path:  newPathFromPathSegments(er.pathSegments),
 		start: startValue,
 		end:   endValue,
 	}

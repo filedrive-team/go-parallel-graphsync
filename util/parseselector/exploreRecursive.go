@@ -172,7 +172,7 @@ func (erc *exploreRecursiveContext) Link(s selector.Selector) bool {
 }
 
 // ParseExploreRecursive assembles a Selector from a ExploreRecursive selector node
-func (er *ERContext) ParseExploreRecursive(n datamodel.Node) (selector.Selector, error) {
+func (er *ERParseContext) ParseExploreRecursive(n datamodel.Node) (selector.Selector, error) {
 	if n.Kind() != datamodel.Kind_Map {
 		return nil, fmt.Errorf("selector spec parse rejected: selector body must be a map")
 	}
@@ -191,7 +191,7 @@ func (er *ERContext) ParseExploreRecursive(n datamodel.Node) (selector.Selector,
 	}
 
 	erc := &exploreRecursiveContext{}
-	tmp := er.ePc.PushParent(erc)
+	tmp := er.PushParent(erc)
 	selector1, err := tmp.ParseSelector(sequence)
 	if err != nil {
 		return nil, err
@@ -200,9 +200,9 @@ func (er *ERContext) ParseExploreRecursive(n datamodel.Node) (selector.Selector,
 		return nil, fmt.Errorf("selector spec parse rejected: ExploreRecursive must have at least one ExploreRecursiveEdge")
 	}
 	expPath := &exploreRecursivePathContext{
-		path:       newPathFromPathSegments(er.ePc.pathSegment),
+		path:       newPathFromPathSegments(er.pathSegments),
 		isUnixfs:   er.isUnixfs,
-		notSupport: len(er.ePc.pathSegment) == 0,
+		notSupport: len(er.pathSegments) == 0,
 	}
 	limitNone := RecursionLimit{selector.RecursionLimit_None, 0}
 	// only support recursion limit none
@@ -215,12 +215,12 @@ func (er *ERContext) ParseExploreRecursive(n datamodel.Node) (selector.Selector,
 	er.collectPath(expPath)
 
 	// todo need check if same, ??? I don't quite understand what that means.
-	er.eCtx = append(er.eCtx, tmp.eCtx...)
+	er.explorePathContexts = append(er.explorePathContexts, tmp.explorePathContexts...)
 
 	var stopCondition *selector.Condition
 	stop, err := n.LookupByString(selector.SelectorKey_StopAt)
 	if err == nil {
-		condition, err := er.ePc.selPc.ParseCondition(stop)
+		condition, err := er.origin.ParseCondition(stop)
 		if err != nil {
 			return nil, err
 		}

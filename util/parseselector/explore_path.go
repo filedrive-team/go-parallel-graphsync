@@ -150,26 +150,3 @@ func checkNextSelector(sel selector.Selector) (recursive bool, notSupport bool) 
 	}
 	return
 }
-
-type exploreUnixFSPathContext struct {
-	path       string
-	recursive  bool
-	notSupport bool
-}
-
-func (erc *exploreUnixFSPathContext) NotSupport() bool {
-	return erc.notSupport
-}
-func (erc *exploreUnixFSPathContext) SetRecursive(recursive bool) {
-	erc.recursive = recursive
-}
-func (erc *exploreUnixFSPathContext) Get() []ExplorePath {
-
-	return []ExplorePath{
-		{
-			Path:      erc.path,
-			Recursive: erc.recursive,
-			IsUnixfs:  true,
-		},
-	}
-}

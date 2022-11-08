@@ -11,7 +11,6 @@ import (
 	dssync "github.com/ipfs/go-datastore/sync"
 	"github.com/ipfs/go-graphsync"
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
-	"github.com/ipfs/go-unixfsnode"
 	"github.com/ipld/go-ipld-prime"
 	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
@@ -334,24 +333,52 @@ func TestSimpleParseGivenUnixFSSelector(t *testing.T) {
 	host.Peerstore().AddAddr(addrInfos[0].ID, addrInfos[0].Addrs[0], peerstore.PermanentAddrTTL)
 	//sel := util.UnixFSPathSelectorNotRecursive("1.jpg")
 	//"fixtures/loremfolder/subfolder/lorem.txt"
-	sel := unixfsnode.UnixFSPathSelector("video2507292463.mp4.bak.mp4")
+	sel1 := util.UnixFSPathSelectorSpec("video2507292463.mp4.bak.mp4", nil)
+	sel2, _ := textselector.SelectorSpecFromPath("Links/1/Hash", false, nil)
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	selUnionLinksUnixfs := ssb.ExploreUnion(sel1, sel2)
+	selRange1 := ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+		specBuilder.Insert("Links", ssb.ExploreRange(1, 4,
+			ssb.Matcher()))
+	})
+	selUnionRangeUnixfs := ssb.ExploreUnion(sel1, selRange1)
 	//sel := unixfsnode.UnixFSPathSelector("1.jpg")
 	var s strings.Builder
-	dagjson.Encode(sel, &s)
+	dagjson.Encode(selUnionLinksUnixfs.Node(), &s)
 	t.Logf(s.String())
 	//todo more testcase
 	testCases := []struct {
 		name     string
 		selRes   ipld.Node
-		resPaths string
+		resPaths []string
 		cids     []string
 	}{
 		{
 			name:     "unixfs",
-			selRes:   sel,
-			resPaths: "video2507292463.mp4.bak.mp4",
+			selRes:   sel1.Node(),
+			resPaths: []string{"video2507292463.mp4.bak.mp4"},
 			cids: []string{
 				"QmeZd6zzw3JbB2eDNwrhZpPzpYd4gLbcenJuNhw9ghoMUo",
+			},
+		},
+		{
+			name:     "unixfs-Links",
+			selRes:   selUnionLinksUnixfs.Node(),
+			resPaths: []string{"video2507292463.mp4.bak.mp4", "Links/1/Hash"},
+			cids: []string{
+				"QmeZd6zzw3JbB2eDNwrhZpPzpYd4gLbcenJuNhw9ghoMUo",
+				"QmQuUub9mC28G2GG9CBL8DUDFbFCZgPvvULaL3obm6JvvF",
+			},
+		},
+		{
+			name:     "unixfs-range",
+			selRes:   selUnionRangeUnixfs.Node(),
+			resPaths: []string{"video2507292463.mp4.bak.mp4", "Links/1/Hash"},
+			cids: []string{
+				"QmeZd6zzw3JbB2eDNwrhZpPzpYd4gLbcenJuNhw9ghoMUo",
+				"QmeZd6zzw3JbB2eDNwrhZpPzpYd4gLbcenJuNhw9ghoMUo",
+				"QmSBk1KqHZw8Wnq2v86SApj7pg7GCVtKKrzUFd1B5Dhoe6",
+				"QmQuUub9mC28G2GG9CBL8DUDFbFCZgPvvULaL3obm6JvvF",
 			},
 		},
 	}
@@ -363,9 +390,9 @@ func TestSimpleParseGivenUnixFSSelector(t *testing.T) {
 			}
 			var cids []string
 			for _, ne := range parsed {
-				var sss strings.Builder
-				dagjson.Encode(ne.Sel, &sss)
-				fmt.Println(sss.String())
+				var str strings.Builder
+				dagjson.Encode(ne.Sel, &str)
+				fmt.Println(str.String())
 				responseProgress, errors := gscli.Request(context.TODO(), addrInfos[0].ID, cidlink.Link{Cid: root}, ne.Sel)
 				go func() {
 					select {
@@ -377,14 +404,14 @@ func TestSimpleParseGivenUnixFSSelector(t *testing.T) {
 				}()
 
 				for blk := range responseProgress {
-					fmt.Printf("unixfs path=%s\n", blk.Path.String())
-					if blk.Path.String() == tc.resPaths {
+					if blk.LastBlock.Link != nil {
+						fmt.Printf("path=%s\n", blk.Path.String())
 						cids = append(cids, blk.LastBlock.Link.String())
 					}
 				}
 
 			}
-			if !pathInPath(cids, tc.cids) {
+			if !pathInPath(tc.cids, cids) {
 				t.Fatal("fail")
 			}
 		})

@@ -75,40 +75,40 @@ func TestParseSelector(t *testing.T) {
 	})
 
 	testCases := []struct {
-		name       string
-		selRes     builder.SelectorSpec
-		resPaths   []ExplorePath
-		notSupport bool
+		name               string
+		srcSelSpec         builder.SelectorSpec
+		expectedPaths      []ExplorePath
+		expectedNotSupport bool
 	}{
 		{
-			name:   "same-depth",
-			selRes: selSameDepth,
-			resPaths: []ExplorePath{
+			name:       "same-depth",
+			srcSelSpec: selSameDepth,
+			expectedPaths: []ExplorePath{
 				{Path: "Links/0/Hash", Recursive: false},
 				{Path: "Links/1/Hash", Recursive: true},
 			},
 		},
 		{
-			name:   "diff-depth",
-			selRes: selDiffDepth,
-			resPaths: []ExplorePath{
+			name:       "diff-depth",
+			srcSelSpec: selDiffDepth,
+			expectedPaths: []ExplorePath{
 				{Path: "Links/0/Hash/Links/0/Hash", Recursive: false},
 				{Path: "Links/3/Hash", Recursive: true},
 			},
 		},
 		{
-			name:   "diff-depth & same-path",
-			selRes: selDiffSamePath,
-			resPaths: []ExplorePath{
+			name:       "diff-depth & same-path",
+			srcSelSpec: selDiffSamePath,
+			expectedPaths: []ExplorePath{
 				{Path: "Links/0/Hash/Links/0/Hash", Recursive: false},
 				{Path: "Links/0/Hash/Links/1/Hash", Recursive: true},
 				{Path: "Links/3/Hash", Recursive: true},
 			},
 		},
 		{
-			name:   "more",
-			selRes: selMore,
-			resPaths: []ExplorePath{
+			name:       "more",
+			srcSelSpec: selMore,
+			expectedPaths: []ExplorePath{
 				{Path: "Links/0/Hash/Links/0/Hash", Recursive: false},
 				{Path: "Links/0/Hash/Links/1/Hash", Recursive: true},
 				{Path: "Links/0/Hash/Links/2/Hash", Recursive: true},
@@ -118,9 +118,9 @@ func TestParseSelector(t *testing.T) {
 			},
 		},
 		{
-			name:   "union-union",
-			selRes: selU2,
-			resPaths: []ExplorePath{
+			name:       "union-union",
+			srcSelSpec: selU2,
+			expectedPaths: []ExplorePath{
 				{Path: "Links/0/Hash/Links/1/Hash/Links/0/Hash", Recursive: false},
 				{Path: "Links/0/Hash/Links/1/Hash/Links/1/Hash", Recursive: true},
 				{Path: "Links/0/Hash/Links/0/Hash", Recursive: false},
@@ -128,86 +128,86 @@ func TestParseSelector(t *testing.T) {
 			},
 		},
 		{
-			name:   "range",
-			selRes: selRange,
-			resPaths: []ExplorePath{
+			name:       "range",
+			srcSelSpec: selRange,
+			expectedPaths: []ExplorePath{
 				{Path: "Links/1/Hash", Recursive: true},
 				{Path: "Links/2/Hash", Recursive: true},
 			},
 		},
 		{
-			name:   "union-range",
-			selRes: selUnionRange,
-			resPaths: []ExplorePath{
+			name:       "union-range",
+			srcSelSpec: selUnionRange,
+			expectedPaths: []ExplorePath{
 				{Path: "Links/1/Hash", Recursive: true},
 				{Path: "Links/2/Hash", Recursive: true},
 				{Path: "Links/3/Hash", Recursive: true},
 			},
 		},
 		{
-			name:   "index",
-			selRes: selIndex,
-			resPaths: []ExplorePath{
+			name:       "index",
+			srcSelSpec: selIndex,
+			expectedPaths: []ExplorePath{
 				{Path: "Links/0/Hash", Recursive: true},
 			},
 		},
 		{
-			name:   "union-index",
-			selRes: selUnionIndex,
-			resPaths: []ExplorePath{
+			name:       "union-index",
+			srcSelSpec: selUnionIndex,
+			expectedPaths: []ExplorePath{
 				{Path: "Links/0/Hash", Recursive: true},
 				{Path: "Links/5/Hash", Recursive: true},
 			},
 		},
 		{
-			name:   "unixfs",
-			selRes: selUnix,
-			resPaths: []ExplorePath{
-				{Path: "dir/a.jpg", Recursive: false, IsUnixfs: true},
+			name:       "unixfs",
+			srcSelSpec: selUnix,
+			expectedPaths: []ExplorePath{
+				{Path: "dir/a.jpg", Recursive: true, IsUnixfs: true},
 			},
 		},
 		{
-			name:       "not-support-index",
-			selRes:     selLeft,
-			resPaths:   nil,
-			notSupport: true,
+			name:               "not-support-index",
+			srcSelSpec:         selLeft,
+			expectedPaths:      nil,
+			expectedNotSupport: true,
 		},
 		{
-			name:       "not-support-range",
-			selRes:     selRecursiveRange,
-			resPaths:   nil,
-			notSupport: true,
+			name:               "not-support-range",
+			srcSelSpec:         selRecursiveRange,
+			expectedPaths:      nil,
+			expectedNotSupport: true,
 		},
 		{
-			name:       "not-support-limit",
-			selRes:     selLimit,
-			resPaths:   nil,
-			notSupport: true,
+			name:               "not-support-limit",
+			srcSelSpec:         selLimit,
+			expectedPaths:      nil,
+			expectedNotSupport: true,
 		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(s *testing.T) {
 			var str strings.Builder
-			dagjson.Encode(tc.selRes.Node(), &str)
+			dagjson.Encode(tc.srcSelSpec.Node(), &str)
 			fmt.Println(str.String())
-			er := &ERContext{}
-			_, err := er.ParseSelector(tc.selRes.Node())
+			er := &ERParseContext{}
+			_, err := er.ParseSelector(tc.srcSelSpec.Node())
 			if err != nil {
 				t.Fatal(err)
 			}
 			var paths []ExplorePath
 			notSupport := false
-			for _, ec := range er.eCtx {
+			for _, ec := range er.explorePathContexts {
 				if ec.NotSupport() {
 					notSupport = true
 				}
 				paths = append(paths, ec.Get()...)
 			}
-			require.Equal(s, tc.notSupport, notSupport)
+			require.Equal(s, tc.expectedNotSupport, notSupport)
 			if !notSupport {
-				require.Equal(s, len(tc.resPaths), len(paths))
+				require.Equal(s, len(tc.expectedPaths), len(paths))
 				for _, path := range paths {
-					require.Contains(s, tc.resPaths, path)
+					require.Contains(s, tc.expectedPaths, path)
 				}
 			}
 		})
