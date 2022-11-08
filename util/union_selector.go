@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+const LeftLinks = "Links/0/Hash"
+
 type trieNode struct {
 	segment  string
 	isEnding bool
@@ -149,4 +151,10 @@ func UnionPathSelectorWeb(paths []string, isLeft bool) (ipld.Node, error) {
 		return nil, fmt.Errorf("selector is nil")
 	}
 	return sel.Node(), nil
+}
+func LeftSelector(path string) ipld.Node {
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	selSpec, _ := textselector.SelectorSpecFromPath(LeftLinks, false, ssb.ExploreRecursiveEdge())
+	fromPath, _ := textselector.SelectorSpecFromPath(textselector.Expression(path), false, ssb.ExploreRecursive(selector.RecursionLimitNone(), selSpec))
+	return fromPath.Node()
 }

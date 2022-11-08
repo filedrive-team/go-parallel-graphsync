@@ -1,23 +1,18 @@
-package util
+package requestmanger
 
 import (
 	"context"
 	"fmt"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
 	"github.com/filedrive-team/go-parallel-graphsync/gsrespserver"
-	"github.com/ipld/go-ipld-prime"
+	"github.com/filedrive-team/go-parallel-graphsync/util"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
-	"github.com/ipld/go-ipld-prime/node/basicnode"
-	"github.com/ipld/go-ipld-prime/traversal/selector"
-	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
-	textselector "github.com/ipld/go-ipld-selector-text-lite"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"math"
 )
 
 const (
 	LeafLinksTemplate  = "/%v/Hash/Links"
-	LeftLinks          = "Links/0/Hash"
 	CheckLinksTemplate = "/%v/Hash"
 )
 
@@ -45,7 +40,7 @@ func StartParGraphSyncRequestManger(ctx context.Context, pgs pargraphsync.Parall
 		rootCid:               root,
 		parallelGraphServers:  gsrespserver.NewParallelGraphServerManger(infos),
 	}
-	s.requestChan <- []pargraphsync.RequestParam{{PeerId: s.parallelGraphServers.GetIdlePeer(ctx), Root: root, Selector: LeftSelector("")}}
+	s.requestChan <- []pargraphsync.RequestParam{{PeerId: s.parallelGraphServers.GetIdlePeer(ctx), Root: root, Selector: util.LeftSelector("")}}
 	s.StartRun(ctx)
 }
 
@@ -155,7 +150,7 @@ func (s *ParallelGraphRequestManger) dividePaths(ctx context.Context, paths []st
 		if i == num-1 {
 			end = len(paths)
 		}
-		sel, err := UnionPathSelector(paths[start:end], true)
+		sel, err := util.UnionPathSelector(paths[start:end], true)
 		// continue or return
 		if err != nil {
 			s.errors <- err
@@ -168,12 +163,6 @@ func (s *ParallelGraphRequestManger) dividePaths(ctx context.Context, paths []st
 		start = end
 	}
 	return requests
-}
-func LeftSelector(path string) ipld.Node {
-	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
-	selSpec, _ := textselector.SelectorSpecFromPath(LeftLinks, false, ssb.ExploreRecursiveEdge())
-	fromPath, _ := textselector.SelectorSpecFromPath(textselector.Expression(path), false, ssb.ExploreRecursive(selector.RecursionLimitNone(), selSpec))
-	return fromPath.Node()
 }
 func Ceil(x, y int) int {
 	return int(math.Ceil(float64(x) / float64(y)))

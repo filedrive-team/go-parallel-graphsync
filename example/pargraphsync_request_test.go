@@ -3,6 +3,7 @@ package example
 import (
 	"context"
 	"fmt"
+	"github.com/filedrive-team/go-parallel-graphsync/requestmanger"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/filedrive-team/go-parallel-graphsync/util/parseselector"
 	"github.com/ipfs/go-cid"
@@ -19,7 +20,7 @@ import (
 )
 
 func TestSimpleParGraphSyncRequestManger(t *testing.T) {
-	util.StartParGraphSyncRequestManger(context.TODO(), bigCarParExchange, cidlink.Link{Cid: bigCarRootCid}, globalAddrInfos)
+	requestmanger.StartParGraphSyncRequestManger(context.TODO(), bigCarParExchange, cidlink.Link{Cid: bigCarRootCid}, globalAddrInfos)
 }
 func TestParGraphSyncRequestMangerSubtree(t *testing.T) {
 	sel1, _ := textselector.SelectorSpecFromPath("Links/2/Hash", false, nil)
@@ -58,7 +59,7 @@ func TestParGraphSyncRequestMangerSubtree(t *testing.T) {
 		}
 		time.Sleep(time.Second)
 		fmt.Println("start")
-		util.StartParGraphSyncRequestManger(context.TODO(), bigCarParExchange, ci, bigCarAddrInfos)
+		requestmanger.StartParGraphSyncRequestManger(context.TODO(), bigCarParExchange, ci, bigCarAddrInfos)
 	}
 
 }
@@ -204,7 +205,7 @@ func TestParGraphSyncRequestMangerParseSelector(t *testing.T) {
 						cids = append(cids, blk.LastBlock.Link.String())
 						if ne.Recursive {
 							ci, _ := cid.Parse(blk.LastBlock.Link.String())
-							util.StartParGraphSyncRequestManger(context.TODO(), bigCarParExchange, cidlink.Link{Cid: ci}, bigCarAddrInfos)
+							requestmanger.StartParGraphSyncRequestManger(context.TODO(), bigCarParExchange, cidlink.Link{Cid: ci}, bigCarAddrInfos)
 						}
 					}
 				}
