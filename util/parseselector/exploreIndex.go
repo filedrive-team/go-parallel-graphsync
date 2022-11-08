@@ -65,7 +65,7 @@ func (er *ERParseContext) ParseExploreIndex(n datamodel.Node) (selector.Selector
 		return nil, err
 	}
 	expPath := &exploreIndexPathContext{
-		path:  newPathFromPathSegments(er.pathSegment),
+		path:  newPathFromPathSegments(er.pathSegments),
 		index: indexValue,
 	}
 	expPath.recursive, expPath.notSupport = checkNextSelector(sel)

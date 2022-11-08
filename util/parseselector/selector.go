@@ -14,7 +14,7 @@ import (
 
 type ERParseContext struct {
 	origin              selector.ParseContext
-	pathSegment         []string
+	pathSegments        []string
 	explorePathContexts []ExplorePathContext
 	isUnixfs            bool
 }
@@ -70,9 +70,9 @@ func (er *ERParseContext) PushParent(parent selector.ParsedParent) *ERParseConte
 	return &ERParseContext{origin: er.origin.PushParent(parent)}
 }
 
-// PushLinks puts a parent onto the stack of parents for a parse context
-func (er *ERParseContext) PushLinks(l string) {
-	er.pathSegment = append(er.pathSegment, l)
+// PushPathSegment puts a path segment onto the stack of parents for a parse context
+func (er *ERParseContext) PushPathSegment(segment string) {
+	er.pathSegments = append(er.pathSegments, segment)
 }
 
 func (er *ERParseContext) collectPath(erc ExplorePathContext) {
@@ -102,7 +102,7 @@ func (er *ERParseContext) ParseMatcher(n datamodel.Node) (selector.Selector, err
 		return nil, err
 	}
 	er.collectPath(&exploreMatchPathContext{
-		path:     newPathFromPathSegments(er.pathSegment),
+		path:     newPathFromPathSegments(er.pathSegments),
 		isUnixfs: er.isUnixfs,
 	})
 	return matcher, nil
@@ -117,7 +117,7 @@ func (er *ERParseContext) ParseExploreUnion(n datamodel.Node) (selector.Selector
 	x := selector.ExploreUnion{
 		Members: make([]selector.Selector, 0, n.Length()),
 	}
-	top := er.pathSegment
+	top := er.pathSegments[:]
 	for itr := n.ListIterator(); !itr.Done(); {
 		_, v, err := itr.Next()
 		if err != nil {
@@ -128,7 +128,7 @@ func (er *ERParseContext) ParseExploreUnion(n datamodel.Node) (selector.Selector
 			return nil, err
 		}
 		// restore path
-		er.pathSegment = top
+		er.pathSegments = top
 		x.Members = append(x.Members, member)
 	}
 	return x, nil

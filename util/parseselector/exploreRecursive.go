@@ -200,9 +200,9 @@ func (er *ERParseContext) ParseExploreRecursive(n datamodel.Node) (selector.Sele
 		return nil, fmt.Errorf("selector spec parse rejected: ExploreRecursive must have at least one ExploreRecursiveEdge")
 	}
 	expPath := &exploreRecursivePathContext{
-		path:       newPathFromPathSegments(er.pathSegment),
+		path:       newPathFromPathSegments(er.pathSegments),
 		isUnixfs:   er.isUnixfs,
-		notSupport: len(er.pathSegment) == 0,
+		notSupport: len(er.pathSegments) == 0,
 	}
 	limitNone := RecursionLimit{selector.RecursionLimit_None, 0}
 	// only support recursion limit none

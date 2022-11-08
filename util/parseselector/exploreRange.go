@@ -90,7 +90,7 @@ func (er *ERParseContext) ParseExploreRange(n datamodel.Node) (selector.Selector
 		x.interest = append(x.interest, datamodel.PathSegmentOfInt(i))
 	}
 	expPath := &exploreRangePathContext{
-		path:  newPathFromPathSegments(er.pathSegment),
+		path:  newPathFromPathSegments(er.pathSegments),
 		start: startValue,
 		end:   endValue,
 	}

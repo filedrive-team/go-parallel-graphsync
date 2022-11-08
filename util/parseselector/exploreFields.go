@@ -69,7 +69,7 @@ func (er *ERParseContext) ParseExploreFields(n datamodel.Node) (selector.Selecto
 		}
 
 		kstr, _ := kn.AsString()
-		er.PushLinks(kstr)
+		er.PushPathSegment(kstr)
 		//Is it a valid judgment?
 		if kstr == "Hash" || kstr == "Links" {
 			er.isUnixfs = false
