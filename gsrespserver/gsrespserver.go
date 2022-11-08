@@ -2,6 +2,7 @@ package gsrespserver
 
 import (
 	"context"
+	"fmt"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"sync"
@@ -15,7 +16,7 @@ type ParallelGraphServer struct {
 	lock           sync.Mutex
 	dealCount      int64
 	timeDelay      int64
-	transformSpeed int64
+	transformSpeed uint64
 	addrInfo       peer.AddrInfo
 }
 
@@ -31,10 +32,15 @@ func NewParallelGraphServerManger(infos []peer.AddrInfo) *ParallelGraphServerMan
 	parallelGraphServerManger.ParaGraphServers = parallelGraphServers
 	return &parallelGraphServerManger
 }
-func (pm *ParallelGraphServerManger) UpdateInfo(ctx context.Context, peerId string, timeDelay, transformSpeed int64) {
+func (pm *ParallelGraphServerManger) UpdateSpeed(ctx context.Context, peerId string, transformSpeed uint64) {
+	pm.ParaGraphServers[peerId].lock.Lock()
+	pm.ParaGraphServers[peerId].transformSpeed = transformSpeed
+	pm.ParaGraphServers[peerId].lock.Unlock()
+	fmt.Printf("peerId %v,speed: %d\n", peerId, transformSpeed)
+}
+func (pm *ParallelGraphServerManger) UpdateDelay(ctx context.Context, peerId string, timeDelay int64) {
 	pm.ParaGraphServers[peerId].lock.Lock()
 	pm.ParaGraphServers[peerId].timeDelay = timeDelay
-	pm.ParaGraphServers[peerId].transformSpeed = transformSpeed
 	pm.ParaGraphServers[peerId].lock.Unlock()
 }
 func (pm *ParallelGraphServerManger) RemovePeer(ctx context.Context, peerId string) {

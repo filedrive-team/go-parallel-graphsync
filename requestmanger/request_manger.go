@@ -6,9 +6,12 @@ import (
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
 	"github.com/filedrive-team/go-parallel-graphsync/gsrespserver"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
+	"github.com/ipfs/go-graphsync"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"math"
+	"sync"
+	"time"
 )
 
 const (
@@ -40,6 +43,7 @@ func StartParGraphSyncRequestManger(ctx context.Context, pgs pargraphsync.Parall
 		rootCid:               root,
 		parallelGraphServers:  gsrespserver.NewParallelGraphServerManger(infos),
 	}
+	s.RegisterCollectSpeedInfo(ctx)
 	s.requestChan <- []pargraphsync.RequestParam{{PeerId: s.parallelGraphServers.GetIdlePeer(ctx), Root: root, Selector: util.LeftSelector("")}}
 	s.StartRun(ctx)
 }
@@ -166,4 +170,34 @@ func (s *ParallelGraphRequestManger) dividePaths(ctx context.Context, paths []st
 }
 func Ceil(x, y int) int {
 	return int(math.Ceil(float64(x) / float64(y)))
+}
+
+func (s *ParallelGraphRequestManger) RegisterCollectSpeedInfo(ctx context.Context) {
+	type co struct {
+		lock  sync.Mutex
+		start int64
+		end   int64
+		cost  int64
+		size  uint64
+	}
+	ti := make(map[string]*co, 1)
+	s.parallelGraphExchange.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
+		if _, ok := ti[p.String()+request.ID().String()]; !ok {
+			ti[p.String()+request.ID().String()] = &co{start: time.Now().UnixNano()}
+		}
+	})
+	s.parallelGraphExchange.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
+		id := p.String() + responseData.RequestID().String()
+		ti[id].lock.Lock()
+		defer ti[id].lock.Unlock()
+		ti[id].cost = time.Now().UnixNano() - ti[id].start
+		ti[id].size += blockData.BlockSize()
+		//todo:maybe more efficient
+		s.parallelGraphServers.UpdateSpeed(ctx, p.String(), calculateSpeed(ti[id].size, ti[id].cost))
+	})
+}
+
+func calculateSpeed(x uint64, y int64) uint64 {
+	// byte/(ns/1000000)/1024=kb/ms
+	return uint64(math.Ceil(float64(x) / (float64(y) / 1_000_000.0) / 1024))
 }
