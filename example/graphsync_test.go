@@ -5,6 +5,7 @@ import (
 	crand "crypto/rand"
 	"fmt"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
+	"github.com/filedrive-team/go-parallel-graphsync/gsrespserver"
 	"github.com/ipfs/go-blockservice"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-cidutil"
@@ -51,6 +52,7 @@ var globalBs blockstore.Blockstore
 var bigCarRootCid cid.Cid
 var bigCarParExchange pargraphsync.ParallelGraphExchange
 var bigCarAddrInfos []peer.AddrInfo
+var parallelGraphServerManger *gsrespserver.ParallelGraphServerManger
 
 const ServicesNum = 3
 

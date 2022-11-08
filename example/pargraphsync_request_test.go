@@ -20,7 +20,10 @@ import (
 )
 
 func TestSimpleParGraphSyncRequestManger(t *testing.T) {
-	requestmanger.StartParGraphSyncRequestManger(context.TODO(), bigCarParExchange, cidlink.Link{Cid: bigCarRootCid}, globalAddrInfos)
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	all := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
+	sel, _ := textselector.SelectorSpecFromPath("Links/2/Hash", false, all)
+	requestmanger.StartPraGraphSync(context.TODO(), bigCarParExchange, sel.Node(), cidlink.Link{Cid: bigCarRootCid}, parallelGraphServerManger)
 }
 func TestParGraphSyncRequestMangerSubtree(t *testing.T) {
 	sel1, _ := textselector.SelectorSpecFromPath("Links/2/Hash", false, nil)
@@ -59,7 +62,8 @@ func TestParGraphSyncRequestMangerSubtree(t *testing.T) {
 		}
 		time.Sleep(time.Second)
 		fmt.Println("start")
-		requestmanger.StartParGraphSyncRequestManger(context.TODO(), bigCarParExchange, ci, bigCarAddrInfos)
+
+		requestmanger.StartParGraphSyncRequestManger(context.TODO(), bigCarParExchange, ci, parallelGraphServerManger)
 	}
 
 }
@@ -205,7 +209,7 @@ func TestParGraphSyncRequestMangerParseSelector(t *testing.T) {
 						cids = append(cids, blk.LastBlock.Link.String())
 						if ne.Recursive {
 							ci, _ := cid.Parse(blk.LastBlock.Link.String())
-							requestmanger.StartParGraphSyncRequestManger(context.TODO(), bigCarParExchange, cidlink.Link{Cid: ci}, bigCarAddrInfos)
+							requestmanger.StartParGraphSyncRequestManger(context.TODO(), bigCarParExchange, cidlink.Link{Cid: ci}, parallelGraphServerManger)
 						}
 					}
 				}

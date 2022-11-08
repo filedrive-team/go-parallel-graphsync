@@ -6,7 +6,10 @@ import (
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
 	"github.com/filedrive-team/go-parallel-graphsync/gsrespserver"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
+	"github.com/filedrive-team/go-parallel-graphsync/util/parseselector"
+	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-graphsync"
+	"github.com/ipld/go-ipld-prime"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"math"
@@ -27,13 +30,63 @@ type ParallelGraphRequestManger struct {
 	doneRequests          map[string]struct{}
 	rootCid               cidlink.Link
 	errors                chan error
-	parallelGraphServers  *gsrespserver.ParallelGraphServerManger
+	pGServerManager       *gsrespserver.ParallelGraphServerManger
+}
+
+func StartPraGraphSync(ctx context.Context, pgs pargraphsync.ParallelGraphExchange, selector ipld.Node, root cidlink.Link, parallelGraphServerManger *gsrespserver.ParallelGraphServerManger) {
+	selectors, err := parseselector.GenerateSelectors(selector)
+	if err != nil {
+		return
+	}
+	cCids, err := CollectSelectorCids(ctx, pgs, selectors, root, parallelGraphServerManger)
+	if err != nil {
+		return
+	}
+	for _, ci := range cCids {
+		if ci.recursive {
+			StartParGraphSyncRequestManger(ctx, pgs, ci.cid, parallelGraphServerManger)
+		}
+	}
+}
+
+type collectCids struct {
+	cid       cidlink.Link
+	recursive bool
+}
+
+func CollectSelectorCids(ctx context.Context, pgs pargraphsync.ParallelGraphExchange, selectors []parseselector.ParsedSelectors, root cidlink.Link, parallelGraphServerManger *gsrespserver.ParallelGraphServerManger) ([]collectCids, error) {
+	var cCids []collectCids
+	var err error
+	for _, ne := range selectors {
+		responseProgress, errors := pgs.Request(context.TODO(), parallelGraphServerManger.GetIdlePeer(ctx), root, ne.Sel)
+		go func() {
+			select {
+			case er := <-errors:
+				if er != nil {
+					err = er
+					return
+				}
+			}
+		}()
+
+		for blk := range responseProgress {
+			if ne.Path == blk.Path.String() {
+				fmt.Printf("edge:%v path=%s:%s \n", ne.Recursive, blk.Path.String(), blk.LastBlock.Link.String())
+				ci, _ := cid.Parse(blk.LastBlock.Link.String())
+				cCids = append(cCids, collectCids{
+					cid:       cidlink.Link{Cid: ci},
+					recursive: ne.Recursive,
+				})
+			}
+		}
+	}
+	return cCids, err
 }
 
 // StartParGraphSyncRequestManger
 // this func will sync all subNode of the rootNode
 // you can use the util/parseselector/GenerateSelectors() to parse a complex selector ,then use this func to sync
-func StartParGraphSyncRequestManger(ctx context.Context, pgs pargraphsync.ParallelGraphExchange, root cidlink.Link, infos []peer.AddrInfo) {
+func StartParGraphSyncRequestManger(ctx context.Context, pgs pargraphsync.ParallelGraphExchange, root cidlink.Link, parallelGraphServers *gsrespserver.ParallelGraphServerManger) {
 	var s = ParallelGraphRequestManger{
 		parallelGraphExchange: pgs,
 		collectedRequests:     make(map[string]struct{}),
@@ -41,10 +94,10 @@ func StartParGraphSyncRequestManger(ctx context.Context, pgs pargraphsync.Parall
 		requestChan:           make(chan []pargraphsync.RequestParam, 1),
 		doneRequests:          make(map[string]struct{}),
 		rootCid:               root,
-		parallelGraphServers:  gsrespserver.NewParallelGraphServerManger(infos),
+		pGServerManager:       parallelGraphServers,
 	}
 	s.RegisterCollectSpeedInfo(ctx)
-	s.requestChan <- []pargraphsync.RequestParam{{PeerId: s.parallelGraphServers.GetIdlePeer(ctx), Root: root, Selector: util.LeftSelector("")}}
+	s.requestChan <- []pargraphsync.RequestParam{{PeerId: s.pGServerManager.GetIdlePeer(ctx), Root: root, Selector: util.LeftSelector("")}}
 	s.StartRun(ctx)
 }
 
@@ -137,14 +190,14 @@ func (s *ParallelGraphRequestManger) run(ctx context.Context, params []pargraphs
 			}
 		}
 	}
-	s.parallelGraphServers.FreeDealCount(ctx, params)
+	s.pGServerManager.FreeDealCount(ctx, params)
 	s.collectRequests(pathMap)
 }
 
 func (s *ParallelGraphRequestManger) dividePaths(ctx context.Context, paths []string) []pargraphsync.RequestParam {
-	ave := Ceil(len(paths), s.parallelGraphServers.GetPeerCount(ctx))
+	ave := Ceil(len(paths), s.pGServerManager.GetPeerCount(ctx))
 	var start, end = 0, 0
-	num := s.parallelGraphServers.GetPeerCount(ctx)
+	num := s.pGServerManager.GetPeerCount(ctx)
 	if num > len(paths) {
 		num = len(paths)
 	}
@@ -162,7 +215,7 @@ func (s *ParallelGraphRequestManger) dividePaths(ctx context.Context, paths []st
 		requests = append(requests, pargraphsync.RequestParam{
 			Selector: sel,
 			Root:     s.rootCid,
-			PeerId:   s.parallelGraphServers.GetIdlePeer(ctx),
+			PeerId:   s.pGServerManager.GetIdlePeer(ctx),
 		})
 		start = end
 	}
@@ -193,11 +246,12 @@ func (s *ParallelGraphRequestManger) RegisterCollectSpeedInfo(ctx context.Contex
 		ti[id].cost = time.Now().UnixNano() - ti[id].start
 		ti[id].size += blockData.BlockSize()
 		//todo:maybe more efficient
-		s.parallelGraphServers.UpdateSpeed(ctx, p.String(), calculateSpeed(ti[id].size, ti[id].cost))
+		s.pGServerManager.UpdateSpeed(ctx, p.String(), calculateSpeed(ti[id].size, ti[id].cost))
 	})
 }
 
 func calculateSpeed(x uint64, y int64) uint64 {
 	// byte/(ns/1000000)/1024=kb/ms
+	// todo more efficient calculation
 	return uint64(math.Ceil(float64(x) / (float64(y) / 1_000_000.0) / 1024))
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
+	"github.com/filedrive-team/go-parallel-graphsync/gsrespserver"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/filedrive-team/go-parallel-graphsync/util/parseselector"
 	"github.com/ipfs/go-cid"
@@ -50,6 +51,7 @@ func startWithBigCar() (pargraphsync.ParallelGraphExchange, []peer.AddrInfo) {
 	for _, addr := range addrInfos {
 		host.Peerstore().AddAddr(addr.ID, addr.Addrs[0], peerstore.PermanentAddrTTL)
 	}
+	parallelGraphServerManger = gsrespserver.NewParallelGraphServerManger(addrInfos)
 	return pgs, addrInfos
 }
 
