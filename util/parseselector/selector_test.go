@@ -190,14 +190,14 @@ func TestParseSelector(t *testing.T) {
 			var str strings.Builder
 			dagjson.Encode(tc.srcSelSpec.Node(), &str)
 			fmt.Println(str.String())
-			er := &ERContext{}
+			er := &ERParseContext{}
 			_, err := er.ParseSelector(tc.srcSelSpec.Node())
 			if err != nil {
 				t.Fatal(err)
 			}
 			var paths []ExplorePath
 			notSupport := false
-			for _, ec := range er.eCtx {
+			for _, ec := range er.explorePathContexts {
 				if ec.NotSupport() {
 					notSupport = true
 				}

@@ -13,14 +13,10 @@ import (
 )
 
 type ERParseContext struct {
-	selPc       selector.ParseContext
-	pathSegment []string
-}
-
-type ERContext struct {
-	eCtx     []ExplorePathContext
-	ePc      ERParseContext
-	isUnixfs bool
+	origin              selector.ParseContext
+	pathSegment         []string
+	explorePathContexts []ExplorePathContext
+	isUnixfs            bool
 }
 
 type ParsedSelectors struct {
@@ -33,7 +29,7 @@ type ParsedSelectors struct {
 // ParseSelector creates a Selector from an IPLD Selector Node with the given context
 //todo Maybe there is a logical problem, and the recursive call will transfer to the method of IPLD prime,
 //todo but there is no problem trying to build a selector that meets the requirements, maybe it will be fixed in the future when problems arise
-func (er *ERContext) ParseSelector(n datamodel.Node) (selector.Selector, error) {
+func (er *ERParseContext) ParseSelector(n datamodel.Node) (selector.Selector, error) {
 	if n.Kind() != datamodel.Kind_Map {
 		return nil, fmt.Errorf("selector spec parse rejected: selector is a keyed union and thus must be a map")
 	}
@@ -49,7 +45,7 @@ func (er *ERContext) ParseSelector(n datamodel.Node) (selector.Selector, error) 
 	case selector.SelectorKey_ExploreFields:
 		return er.ParseExploreFields(v)
 	case selector.SelectorKey_ExploreAll:
-		return er.ePc.selPc.ParseExploreAll(v)
+		return er.origin.ParseExploreAll(v)
 	case selector.SelectorKey_ExploreIndex:
 		return er.ParseExploreIndex(v)
 	case selector.SelectorKey_ExploreRange:
@@ -59,7 +55,7 @@ func (er *ERContext) ParseSelector(n datamodel.Node) (selector.Selector, error) 
 	case selector.SelectorKey_ExploreRecursive:
 		return er.ParseExploreRecursive(v)
 	case selector.SelectorKey_ExploreRecursiveEdge:
-		return er.ePc.selPc.ParseExploreRecursiveEdge(v)
+		return er.origin.ParseExploreRecursiveEdge(v)
 	case selector.SelectorKey_ExploreInterpretAs:
 		return er.ParseExploreInterpretAs(v)
 	case selector.SelectorKey_Matcher:
@@ -70,26 +66,26 @@ func (er *ERContext) ParseSelector(n datamodel.Node) (selector.Selector, error) 
 }
 
 // PushParent puts a parent onto the stack of parents for a parse context
-func (c *ERParseContext) PushParent(parent selector.ParsedParent) *ERContext {
-	return &ERContext{ePc: ERParseContext{selPc: c.selPc.PushParent(parent)}}
+func (er *ERParseContext) PushParent(parent selector.ParsedParent) *ERParseContext {
+	return &ERParseContext{origin: er.origin.PushParent(parent)}
 }
 
 // PushLinks puts a parent onto the stack of parents for a parse context
-func (c *ERParseContext) PushLinks(l string) {
-	c.pathSegment = append(c.pathSegment, l)
+func (er *ERParseContext) PushLinks(l string) {
+	er.pathSegment = append(er.pathSegment, l)
 }
 
-func (er *ERContext) collectPath(erc ExplorePathContext) {
+func (er *ERParseContext) collectPath(erc ExplorePathContext) {
 	paths := erc.Get()
 	if len(paths) > 0 {
 		if erc.NotSupport() {
-			er.eCtx = append(er.eCtx, erc)
+			er.explorePathContexts = append(er.explorePathContexts, erc)
 		} else {
 			if er.isUnixfs {
 				erc.SetRecursive(true)
-				er.eCtx = append(er.eCtx, erc)
+				er.explorePathContexts = append(er.explorePathContexts, erc)
 			} else if strings.HasSuffix(paths[0].Path, "Hash") {
-				er.eCtx = append(er.eCtx, erc)
+				er.explorePathContexts = append(er.explorePathContexts, erc)
 			} else {
 				fmt.Println(erc.Get())
 			}
@@ -100,13 +96,13 @@ func (er *ERContext) collectPath(erc ExplorePathContext) {
 // ParseMatcher assembles a Selector
 // from a matcher selector node
 // TODO: Parse labels and conditions
-func (er *ERContext) ParseMatcher(n datamodel.Node) (selector.Selector, error) {
-	matcher, err := er.ePc.selPc.ParseMatcher(n)
+func (er *ERParseContext) ParseMatcher(n datamodel.Node) (selector.Selector, error) {
+	matcher, err := er.origin.ParseMatcher(n)
 	if err != nil || matcher == nil {
 		return nil, err
 	}
 	er.collectPath(&exploreMatchPathContext{
-		path:     newPathFromPathSegments(er.ePc.pathSegment),
+		path:     newPathFromPathSegments(er.pathSegment),
 		isUnixfs: er.isUnixfs,
 	})
 	return matcher, nil
@@ -114,14 +110,14 @@ func (er *ERContext) ParseMatcher(n datamodel.Node) (selector.Selector, error) {
 
 // ParseExploreUnion assembles a Selector
 // from an ExploreUnion selector node
-func (er *ERContext) ParseExploreUnion(n datamodel.Node) (selector.Selector, error) {
+func (er *ERParseContext) ParseExploreUnion(n datamodel.Node) (selector.Selector, error) {
 	if n.Kind() != datamodel.Kind_List {
 		return nil, fmt.Errorf("selector spec parse rejected: explore union selector must be a list")
 	}
 	x := selector.ExploreUnion{
 		Members: make([]selector.Selector, 0, n.Length()),
 	}
-	top := er.ePc.pathSegment
+	top := er.pathSegment
 	for itr := n.ListIterator(); !itr.Done(); {
 		_, v, err := itr.Next()
 		if err != nil {
@@ -132,7 +128,7 @@ func (er *ERContext) ParseExploreUnion(n datamodel.Node) (selector.Selector, err
 			return nil, err
 		}
 		// restore path
-		er.ePc.pathSegment = top
+		er.pathSegment = top
 		x.Members = append(x.Members, member)
 	}
 	return x, nil
@@ -147,12 +143,12 @@ func newPathFromPathSegments(paths []string) string {
 }
 
 func GenerateSelectors(sel ipld.Node) (selectors []ParsedSelectors, err error) {
-	er := &ERContext{}
+	er := &ERParseContext{}
 	_, err = er.ParseSelector(sel)
 	if err != nil {
 		return nil, err
 	}
-	for _, ec := range er.eCtx {
+	for _, ec := range er.explorePathContexts {
 		if ec.NotSupport() {
 			return nil, errors.New("not support")
 		}

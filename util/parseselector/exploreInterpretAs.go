@@ -46,7 +46,7 @@ type Reifiable interface {
 
 // ParseExploreInterpretAs assembles a Selector
 // from a ExploreInterpretAs selector node
-func (er *ERContext) ParseExploreInterpretAs(n datamodel.Node) (selector.Selector, error) {
+func (er *ERParseContext) ParseExploreInterpretAs(n datamodel.Node) (selector.Selector, error) {
 	if n.Kind() != datamodel.Kind_Map {
 		return nil, fmt.Errorf("selector spec parse rejected: selector body must be a map")
 	}

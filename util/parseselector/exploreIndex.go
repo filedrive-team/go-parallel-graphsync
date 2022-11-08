@@ -44,7 +44,7 @@ func (s ExploreIndex) Match(node datamodel.Node) (datamodel.Node, error) {
 
 // ParseExploreIndex assembles a Selector
 // from a ExploreIndex selector node
-func (er *ERContext) ParseExploreIndex(n datamodel.Node) (selector.Selector, error) {
+func (er *ERParseContext) ParseExploreIndex(n datamodel.Node) (selector.Selector, error) {
 	if n.Kind() != datamodel.Kind_Map {
 		return nil, fmt.Errorf("selector spec parse rejected: selector body must be a map")
 	}
@@ -65,7 +65,7 @@ func (er *ERContext) ParseExploreIndex(n datamodel.Node) (selector.Selector, err
 		return nil, err
 	}
 	expPath := &exploreIndexPathContext{
-		path:  newPathFromPathSegments(er.ePc.pathSegment),
+		path:  newPathFromPathSegments(er.pathSegment),
 		index: indexValue,
 	}
 	expPath.recursive, expPath.notSupport = checkNextSelector(sel)
