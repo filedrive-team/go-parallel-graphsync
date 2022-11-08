@@ -75,15 +75,15 @@ func TestParseSelector(t *testing.T) {
 	})
 
 	testCases := []struct {
-		name       string
-		srcSelSpec builder.SelectorSpec
-		resPaths   []ExplorePath
-		notSupport bool
+		name               string
+		srcSelSpec         builder.SelectorSpec
+		expectedPaths      []ExplorePath
+		expectedNotSupport bool
 	}{
 		{
 			name:       "same-depth",
 			srcSelSpec: selSameDepth,
-			resPaths: []ExplorePath{
+			expectedPaths: []ExplorePath{
 				{Path: "Links/0/Hash", Recursive: false},
 				{Path: "Links/1/Hash", Recursive: true},
 			},
@@ -91,7 +91,7 @@ func TestParseSelector(t *testing.T) {
 		{
 			name:       "diff-depth",
 			srcSelSpec: selDiffDepth,
-			resPaths: []ExplorePath{
+			expectedPaths: []ExplorePath{
 				{Path: "Links/0/Hash/Links/0/Hash", Recursive: false},
 				{Path: "Links/3/Hash", Recursive: true},
 			},
@@ -99,7 +99,7 @@ func TestParseSelector(t *testing.T) {
 		{
 			name:       "diff-depth & same-path",
 			srcSelSpec: selDiffSamePath,
-			resPaths: []ExplorePath{
+			expectedPaths: []ExplorePath{
 				{Path: "Links/0/Hash/Links/0/Hash", Recursive: false},
 				{Path: "Links/0/Hash/Links/1/Hash", Recursive: true},
 				{Path: "Links/3/Hash", Recursive: true},
@@ -108,7 +108,7 @@ func TestParseSelector(t *testing.T) {
 		{
 			name:       "more",
 			srcSelSpec: selMore,
-			resPaths: []ExplorePath{
+			expectedPaths: []ExplorePath{
 				{Path: "Links/0/Hash/Links/0/Hash", Recursive: false},
 				{Path: "Links/0/Hash/Links/1/Hash", Recursive: true},
 				{Path: "Links/0/Hash/Links/2/Hash", Recursive: true},
@@ -120,7 +120,7 @@ func TestParseSelector(t *testing.T) {
 		{
 			name:       "union-union",
 			srcSelSpec: selU2,
-			resPaths: []ExplorePath{
+			expectedPaths: []ExplorePath{
 				{Path: "Links/0/Hash/Links/1/Hash/Links/0/Hash", Recursive: false},
 				{Path: "Links/0/Hash/Links/1/Hash/Links/1/Hash", Recursive: true},
 				{Path: "Links/0/Hash/Links/0/Hash", Recursive: false},
@@ -130,7 +130,7 @@ func TestParseSelector(t *testing.T) {
 		{
 			name:       "range",
 			srcSelSpec: selRange,
-			resPaths: []ExplorePath{
+			expectedPaths: []ExplorePath{
 				{Path: "Links/1/Hash", Recursive: true},
 				{Path: "Links/2/Hash", Recursive: true},
 			},
@@ -138,7 +138,7 @@ func TestParseSelector(t *testing.T) {
 		{
 			name:       "union-range",
 			srcSelSpec: selUnionRange,
-			resPaths: []ExplorePath{
+			expectedPaths: []ExplorePath{
 				{Path: "Links/1/Hash", Recursive: true},
 				{Path: "Links/2/Hash", Recursive: true},
 				{Path: "Links/3/Hash", Recursive: true},
@@ -147,14 +147,14 @@ func TestParseSelector(t *testing.T) {
 		{
 			name:       "index",
 			srcSelSpec: selIndex,
-			resPaths: []ExplorePath{
+			expectedPaths: []ExplorePath{
 				{Path: "Links/0/Hash", Recursive: true},
 			},
 		},
 		{
 			name:       "union-index",
 			srcSelSpec: selUnionIndex,
-			resPaths: []ExplorePath{
+			expectedPaths: []ExplorePath{
 				{Path: "Links/0/Hash", Recursive: true},
 				{Path: "Links/5/Hash", Recursive: true},
 			},
@@ -162,27 +162,27 @@ func TestParseSelector(t *testing.T) {
 		{
 			name:       "unixfs",
 			srcSelSpec: selUnix,
-			resPaths: []ExplorePath{
+			expectedPaths: []ExplorePath{
 				{Path: "dir/a.jpg", Recursive: true, IsUnixfs: true},
 			},
 		},
 		{
-			name:       "not-support-index",
-			srcSelSpec: selLeft,
-			resPaths:   nil,
-			notSupport: true,
+			name:               "not-support-index",
+			srcSelSpec:         selLeft,
+			expectedPaths:      nil,
+			expectedNotSupport: true,
 		},
 		{
-			name:       "not-support-range",
-			srcSelSpec: selRecursiveRange,
-			resPaths:   nil,
-			notSupport: true,
+			name:               "not-support-range",
+			srcSelSpec:         selRecursiveRange,
+			expectedPaths:      nil,
+			expectedNotSupport: true,
 		},
 		{
-			name:       "not-support-limit",
-			srcSelSpec: selLimit,
-			resPaths:   nil,
-			notSupport: true,
+			name:               "not-support-limit",
+			srcSelSpec:         selLimit,
+			expectedPaths:      nil,
+			expectedNotSupport: true,
 		},
 	}
 	for _, tc := range testCases {
@@ -203,11 +203,11 @@ func TestParseSelector(t *testing.T) {
 				}
 				paths = append(paths, ec.Get()...)
 			}
-			require.Equal(s, tc.notSupport, notSupport)
+			require.Equal(s, tc.expectedNotSupport, notSupport)
 			if !notSupport {
-				require.Equal(s, len(tc.resPaths), len(paths))
+				require.Equal(s, len(tc.expectedPaths), len(paths))
 				for _, path := range paths {
-					require.Contains(s, tc.resPaths, path)
+					require.Contains(s, tc.expectedPaths, path)
 				}
 			}
 		})
