@@ -51,7 +51,7 @@ func startWithBigCar() (pargraphsync.ParallelGraphExchange, []peer.AddrInfo) {
 	for _, addr := range addrInfos {
 		host.Peerstore().AddAddr(addr.ID, addr.Addrs[0], peerstore.PermanentAddrTTL)
 	}
-	parallelGraphServerManger = gsrespserver.NewParallelGraphServerManger(addrInfos)
+	parallelGraphServerManger = gsrespserver.NewParallelGraphServerManger(addrInfos, host)
 	return pgs, addrInfos
 }
 
@@ -411,7 +411,6 @@ func TestSimpleParseGivenUnixFSSelector(t *testing.T) {
 						cids = append(cids, blk.LastBlock.Link.String())
 					}
 				}
-
 			}
 			if !pathInPath(tc.cids, cids) {
 				t.Fatal("fail")
@@ -419,22 +418,4 @@ func TestSimpleParseGivenUnixFSSelector(t *testing.T) {
 		})
 
 	}
-}
-
-func compare(doneTasks map[string]struct{}, paths2 []string) bool {
-	for _, pa2 := range paths2 {
-		have := false
-		for pa1 := range doneTasks {
-			if pa1 == pa2 {
-				have = true
-				break
-			}
-		}
-		if have {
-			continue
-		} else {
-			return false
-		}
-	}
-	return true
 }

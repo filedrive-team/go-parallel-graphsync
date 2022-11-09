@@ -23,7 +23,9 @@ func TestSimpleParGraphSyncRequestManger(t *testing.T) {
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
 	all := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
 	sel, _ := textselector.SelectorSpecFromPath("Links/2/Hash", false, all)
+	go parallelGraphServerManger.RecordDelay(context.TODO(), time.Second*5)
 	requestmanger.StartPraGraphSync(context.TODO(), bigCarParExchange, sel.Node(), cidlink.Link{Cid: bigCarRootCid}, parallelGraphServerManger)
+	time.Sleep(time.Second * 15)
 }
 func TestParGraphSyncRequestMangerSubtree(t *testing.T) {
 	sel1, _ := textselector.SelectorSpecFromPath("Links/2/Hash", false, nil)

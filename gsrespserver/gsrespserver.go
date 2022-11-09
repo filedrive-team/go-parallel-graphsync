@@ -2,13 +2,18 @@ package gsrespserver
 
 import (
 	"context"
+	"fmt"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
+	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"sync"
+	"time"
 )
 
 type ParallelGraphServerManger struct {
 	lock             sync.RWMutex
+	host             host.Host
 	ParaGraphServers map[string]*ParallelGraphServer
 }
 type ParallelGraphServer struct {
@@ -19,7 +24,7 @@ type ParallelGraphServer struct {
 	addrInfo       peer.AddrInfo
 }
 
-func NewParallelGraphServerManger(infos []peer.AddrInfo) *ParallelGraphServerManger {
+func NewParallelGraphServerManger(infos []peer.AddrInfo, host host.Host) *ParallelGraphServerManger {
 	var parallelGraphServerManger ParallelGraphServerManger
 	parallelGraphServers := make(map[string]*ParallelGraphServer)
 	for _, info := range infos {
@@ -29,6 +34,7 @@ func NewParallelGraphServerManger(infos []peer.AddrInfo) *ParallelGraphServerMan
 		}
 	}
 	parallelGraphServerManger.ParaGraphServers = parallelGraphServers
+	parallelGraphServerManger.host = host
 	return &parallelGraphServerManger
 }
 func (pm *ParallelGraphServerManger) UpdateSpeed(ctx context.Context, peerId string, transformSpeed uint64) {
@@ -74,4 +80,33 @@ func (pm *ParallelGraphServerManger) GetIdlePeer(ctx context.Context) peer.ID {
 }
 func (pm *ParallelGraphServerManger) GetPeerCount(ctx context.Context) int {
 	return len(pm.ParaGraphServers)
+}
+func (pm *ParallelGraphServerManger) RecordDelay(ctx context.Context, pingInterval time.Duration) {
+	timer := time.NewTimer(pingInterval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("close")
+			return
+		case <-timer.C:
+			for _, pgs := range pm.ParaGraphServers {
+				ps := ping.NewPingService(pm.host)
+				ts := ps.Ping(ctx, pgs.addrInfo.ID)
+				select {
+				case res := <-ts:
+					if res.Error != nil {
+						fmt.Println("err:", res.Error)
+						continue
+					}
+					fmt.Println("ping took: ", res.RTT.Nanoseconds())
+					pm.UpdateDelay(ctx, pgs.addrInfo.ID.String(), res.RTT.Nanoseconds())
+
+				case <-time.After(time.Second * 2):
+					fmt.Println("failed to receive ping")
+				}
+			}
+			timer.Reset(pingInterval)
+		}
+	}
 }

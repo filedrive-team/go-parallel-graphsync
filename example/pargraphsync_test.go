@@ -414,7 +414,7 @@ func TestParallelGraphSyncControl(t *testing.T) {
 }
 
 func startPraGraphSyncClient(ctx context.Context, listenAddr string, keyFile string, bs blockstore.Blockstore) (host.Host, pargraphsync.ParallelGraphExchange, error) {
-	peerkey, err := loadOrInitPeerKey(keyFile)
+	peerkey, err := util.LoadOrInitPeerKey(keyFile)
 	if err != nil {
 		return nil, nil, err
 	}

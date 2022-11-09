@@ -2,10 +2,10 @@ package example
 
 import (
 	"context"
-	crand "crypto/rand"
 	"fmt"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
 	"github.com/filedrive-team/go-parallel-graphsync/gsrespserver"
+	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/ipfs/go-blockservice"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-cidutil"
@@ -35,7 +35,6 @@ import (
 	mh "github.com/multiformats/go-multihash"
 	"golang.org/x/xerrors"
 	"io"
-	"io/ioutil"
 	"os"
 	"path"
 	"path/filepath"
@@ -224,32 +223,6 @@ func TestUnixfsPathGraphSync(t *testing.T) {
 	}
 }
 
-func loadOrInitPeerKey(kf string) (crypto.PrivKey, error) {
-	data, err := ioutil.ReadFile(kf)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return nil, err
-		}
-
-		k, _, err := crypto.GenerateEd25519Key(crand.Reader)
-		if err != nil {
-			return nil, err
-		}
-
-		data, err := crypto.MarshalPrivateKey(k)
-		if err != nil {
-			return nil, err
-		}
-
-		if err := ioutil.WriteFile(kf, data, 0600); err != nil {
-			return nil, err
-		}
-
-		return k, nil
-	}
-	return crypto.UnmarshalPrivateKey(data)
-}
-
 var DefaultHashFunction = uint64(mh.BLAKE2B_MIN + 31)
 
 func unixFSCidBuilder() (cid.Builder, error) {
@@ -381,7 +354,7 @@ func startGraphSyncService(ctx context.Context, listenAddr string, peerkey crypt
 }
 
 func startGraphSyncClient(ctx context.Context, listenAddr string, keyFile string, bs blockstore.Blockstore) (host.Host, graphsync.GraphExchange, error) {
-	peerkey, err := loadOrInitPeerKey(keyFile)
+	peerkey, err := util.LoadOrInitPeerKey(keyFile)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -422,7 +395,7 @@ func startSomeGraphSyncServicesByBlockStore(ctx context.Context, number int, por
 	var addrInfos []peer.AddrInfo
 	for i := 0; i < number; i++ {
 		keyFile := path.Join(os.TempDir(), fmt.Sprintf("globalParExchange-key%d", portStart+i))
-		peerkey, err := loadOrInitPeerKey(keyFile)
+		peerkey, err := util.LoadOrInitPeerKey(keyFile)
 		if err != nil {
 			return nil, err
 		}
