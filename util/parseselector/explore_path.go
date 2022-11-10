@@ -145,6 +145,15 @@ func checkNextSelector(sel selector.Selector) (recursive bool, notSupport bool) 
 				return
 			}
 		}
+	case ExploreIndex:
+		// more actions
+		indexSel := sel.(ExploreIndex)
+		indexRecursive, indexNotSupport := checkNextSelector(indexSel.next)
+		recursive = recursive || indexRecursive
+		notSupport = notSupport || indexNotSupport
+		if notSupport {
+			return
+		}
 	default:
 		notSupport = true
 	}

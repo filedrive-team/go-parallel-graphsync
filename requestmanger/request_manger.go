@@ -29,24 +29,43 @@ type ParallelGraphRequestManger struct {
 	requestChan           chan []pargraphsync.RequestParam
 	doneRequests          map[string]struct{}
 	rootCid               cidlink.Link
-	errors                chan error
+	errorsChan            chan error
 	pGServerManager       *gsrespserver.ParallelGraphServerManger
 }
 
-func StartPraGraphSync(ctx context.Context, pgs pargraphsync.ParallelGraphExchange, selector ipld.Node, root cidlink.Link, parallelGraphServerManger *gsrespserver.ParallelGraphServerManger) {
+func NewParGraphSyncRequestManger(pgs pargraphsync.ParallelGraphExchange, root cidlink.Link, parallelGraphServers *gsrespserver.ParallelGraphServerManger) *ParallelGraphRequestManger {
+	return &ParallelGraphRequestManger{
+		parallelGraphExchange: pgs,
+		collectedRequests:     make(map[string]struct{}),
+		runningRequests:       make(map[string]struct{}),
+		requestChan:           make(chan []pargraphsync.RequestParam, 1),
+		doneRequests:          make(map[string]struct{}),
+		rootCid:               root,
+		errorsChan:            make(chan error),
+		pGServerManager:       parallelGraphServers,
+	}
+}
+func StartPraGraphSync(ctx context.Context, pgs pargraphsync.ParallelGraphExchange, selector ipld.Node, root cidlink.Link, parallelGraphServerManger *gsrespserver.ParallelGraphServerManger) error {
 	selectors, err := parseselector.GenerateSelectors(selector)
 	if err != nil {
-		return
+		return err
 	}
-	cCids, err := CollectSelectorCids(ctx, pgs, selectors, root, parallelGraphServerManger)
-	if err != nil {
-		return
-	}
+	s := NewParGraphSyncRequestManger(pgs, root, parallelGraphServerManger)
+	cCids := s.CollectSelectorCids(ctx, selectors)
+	go func() {
+		select {
+		case err = <-s.errorsChan:
+			if err != nil {
+				return
+			}
+		}
+	}()
 	for _, ci := range cCids {
 		if ci.recursive {
-			StartParGraphSyncRequestManger(ctx, pgs, ci.cid, parallelGraphServerManger)
+			return s.startParGraphSyncRequestManger(ctx, ci.cid)
 		}
 	}
+	return err
 }
 
 type collectCids struct {
@@ -54,16 +73,15 @@ type collectCids struct {
 	recursive bool
 }
 
-func CollectSelectorCids(ctx context.Context, pgs pargraphsync.ParallelGraphExchange, selectors []parseselector.ParsedSelectors, root cidlink.Link, parallelGraphServerManger *gsrespserver.ParallelGraphServerManger) ([]collectCids, error) {
+func (s *ParallelGraphRequestManger) CollectSelectorCids(ctx context.Context, selectors []parseselector.ParsedSelectors) []collectCids {
 	var cCids []collectCids
-	var err error
 	for _, ne := range selectors {
-		responseProgress, errors := pgs.Request(context.TODO(), parallelGraphServerManger.GetIdlePeer(ctx), root, ne.Sel)
+		responseProgress, errors := s.parallelGraphExchange.Request(context.TODO(), s.pGServerManager.GetIdlePeer(ctx), s.rootCid, ne.Sel)
 		go func() {
 			select {
-			case er := <-errors:
-				if er != nil {
-					err = er
+			case err := <-errors:
+				if err != nil {
+					s.errorsChan <- err
 					return
 				}
 			}
@@ -80,43 +98,33 @@ func CollectSelectorCids(ctx context.Context, pgs pargraphsync.ParallelGraphExch
 			}
 		}
 	}
-	return cCids, err
+	return cCids
 }
 
-// StartParGraphSyncRequestManger
-// this func will sync all subNode of the rootNode
-// you can use the util/parseselector/GenerateSelectors() to parse a complex selector ,then use this func to sync
-func StartParGraphSyncRequestManger(ctx context.Context, pgs pargraphsync.ParallelGraphExchange, root cidlink.Link, parallelGraphServers *gsrespserver.ParallelGraphServerManger) {
-	var s = ParallelGraphRequestManger{
-		parallelGraphExchange: pgs,
-		collectedRequests:     make(map[string]struct{}),
-		runningRequests:       make(map[string]struct{}),
-		requestChan:           make(chan []pargraphsync.RequestParam, 1),
-		doneRequests:          make(map[string]struct{}),
-		rootCid:               root,
-		pGServerManager:       parallelGraphServers,
-	}
+// initParGraphSyncRequestManger
+func (s *ParallelGraphRequestManger) startParGraphSyncRequestManger(ctx context.Context, root cidlink.Link) error {
 	s.RegisterCollectSpeedInfo(ctx)
 	s.requestChan <- []pargraphsync.RequestParam{{PeerId: s.pGServerManager.GetIdlePeer(ctx), Root: root, Selector: util.LeftSelector("")}}
-	s.StartRun(ctx)
+	return s.StartRun(ctx)
 }
 
 // StartRun you can also build a ParallelGraphRequestManger yourself and use this method to synchronize
-func (s *ParallelGraphRequestManger) StartRun(ctx context.Context) {
+func (s *ParallelGraphRequestManger) StartRun(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	for {
 		select {
 		case request := <-s.requestChan:
 			s.run(ctx, request)
-		case err := <-s.errors:
+		case err := <-s.errorsChan:
 			if err != nil {
 				fmt.Printf("request error: %v\n", err)
 				cancel()
+				return err
 			}
 		default:
 			if !s.divideRequests(ctx) {
 				s.Close(cancel)
-				return
+				return nil
 			}
 		}
 	}
@@ -210,7 +218,7 @@ func (s *ParallelGraphRequestManger) dividePaths(ctx context.Context, paths []st
 		sel, err := util.UnionPathSelector(paths[start:end], true)
 		// continue or return
 		if err != nil {
-			s.errors <- err
+			s.errorsChan <- err
 		}
 		requests = append(requests, pargraphsync.RequestParam{
 			Selector: sel,
