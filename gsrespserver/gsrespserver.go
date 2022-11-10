@@ -53,6 +53,7 @@ func (pm *ParallelGraphServerManger) UpdateDelay(ctx context.Context, peerId str
 	pm.ParaGraphServers[peerId].lock.Unlock()
 }
 func (pm *ParallelGraphServerManger) RemovePeer(ctx context.Context, peerId string) {
+	// need check if dealCount==0
 	pm.lock.Lock()
 	delete(pm.ParaGraphServers, peerId)
 	pm.lock.Unlock()
@@ -63,8 +64,6 @@ func (pm *ParallelGraphServerManger) UpdateDealCount(ctx context.Context, peerId
 	pm.ParaGraphServers[peerId].lock.Unlock()
 }
 func (pm *ParallelGraphServerManger) GetPeerInfo(ctx context.Context, peerId string) PeerInfo {
-	pm.ParaGraphServers[peerId].lock.RLock()
-	defer pm.ParaGraphServers[peerId].lock.RUnlock()
 	info, ok := pm.ParaGraphServers[peerId]
 	if ok {
 		return info.peerInfo
