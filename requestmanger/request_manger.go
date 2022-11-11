@@ -51,18 +51,20 @@ func StartPraGraphSync(ctx context.Context, pgs pargraphsync.ParallelGraphExchan
 		return err
 	}
 	s := NewParGraphSyncRequestManger(pgs, root, parallelGraphServerManger)
+	ctx, cancel := context.WithCancel(ctx)
 	cCids := s.CollectSelectorCids(ctx, selectors)
 	go func() {
 		select {
 		case err = <-s.errorsChan:
 			if err != nil {
+				cancel()
 				return
 			}
 		}
 	}()
 	for _, ci := range cCids {
 		if ci.recursive {
-			return s.startParGraphSyncRequestManger(ctx, ci.cid)
+			s.startParGraphSyncRequestManger(ctx, ci.cid)
 		}
 	}
 	return err
@@ -102,29 +104,23 @@ func (s *ParallelGraphRequestManger) CollectSelectorCids(ctx context.Context, se
 }
 
 // initParGraphSyncRequestManger
-func (s *ParallelGraphRequestManger) startParGraphSyncRequestManger(ctx context.Context, root cidlink.Link) error {
+func (s *ParallelGraphRequestManger) startParGraphSyncRequestManger(ctx context.Context, root cidlink.Link) {
 	s.RegisterCollectSpeedInfo(ctx)
 	s.requestChan <- []pargraphsync.RequestParam{{PeerId: s.pGServerManager.GetIdlePeer(ctx), Root: root, Selector: util.LeftSelector("")}}
-	return s.StartRun(ctx)
+	s.StartRun(ctx)
 }
 
 // StartRun you can also build a ParallelGraphRequestManger yourself and use this method to synchronize
-func (s *ParallelGraphRequestManger) StartRun(ctx context.Context) error {
+func (s *ParallelGraphRequestManger) StartRun(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	for {
 		select {
 		case request := <-s.requestChan:
 			s.run(ctx, request)
-		case err := <-s.errorsChan:
-			if err != nil {
-				fmt.Printf("request error: %v\n", err)
-				cancel()
-				return err
-			}
 		default:
 			if !s.divideRequests(ctx) {
 				s.Close(cancel)
-				return nil
+				return
 			}
 		}
 	}
