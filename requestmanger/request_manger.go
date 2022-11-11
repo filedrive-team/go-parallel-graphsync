@@ -2,6 +2,7 @@ package requestmanger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
 	"github.com/filedrive-team/go-parallel-graphsync/gsrespserver"
@@ -18,8 +19,9 @@ import (
 )
 
 const (
-	LeafLinksTemplate  = "/%v/Hash/Links"
-	CheckLinksTemplate = "/%v/Hash"
+	LeafLinksTemplate                = "/%v/Hash/Links"
+	CheckLinksTemplate               = "/%v/Hash"
+	CollectSelectorSubTreeCidTimeOut = time.Second * 10
 )
 
 type ParallelGraphRequestManger struct {
@@ -50,9 +52,13 @@ func StartPraGraphSync(ctx context.Context, pgs pargraphsync.ParallelGraphExchan
 	if err != nil {
 		return err
 	}
+	//ctxTimeout, cancel := context.WithTimeout(ctx, CollectSelectorSubTreeCidTimeOut)
+	cCids := CollectSelectorSubTreeCid(ctx, selectors, pgs, root, parallelGraphServerManger)
+	if len(cCids) == 0 {
+		return errors.New("timeout to collect")
+	}
 	s := NewParGraphSyncRequestManger(pgs, root, parallelGraphServerManger)
 	ctx, cancel := context.WithCancel(ctx)
-	cCids := s.CollectSelectorCids(ctx, selectors)
 	go func() {
 		select {
 		case err = <-s.errorsChan:
@@ -60,6 +66,9 @@ func StartPraGraphSync(ctx context.Context, pgs pargraphsync.ParallelGraphExchan
 				cancel()
 				return
 			}
+		case <-ctx.Done():
+			cancel()
+			return
 		}
 	}()
 	for _, ci := range cCids {
@@ -75,32 +84,39 @@ type collectCids struct {
 	recursive bool
 }
 
-func (s *ParallelGraphRequestManger) CollectSelectorCids(ctx context.Context, selectors []parseselector.ParsedSelectors) []collectCids {
-	var cCids []collectCids
+func CollectSelectorSubTreeCid(ctx context.Context, selectors []parseselector.ParsedSelectors, pgs pargraphsync.ParallelGraphExchange,
+	root cidlink.Link, parallelGraphServerManger *gsrespserver.ParallelGraphServerManger) []collectCids {
+	var cids []collectCids
+	ctxTimeout, cancel := context.WithTimeout(ctx, CollectSelectorSubTreeCidTimeOut)
+	defer cancel()
 	for _, ne := range selectors {
-		responseProgress, errors := s.parallelGraphExchange.Request(context.TODO(), s.pGServerManager.GetIdlePeer(ctx), s.rootCid, ne.Sel)
+		responseProgress, errorChan := pgs.Request(ctxTimeout, parallelGraphServerManger.GetIdlePeer(ctx), root, ne.Sel)
+		completed := make(chan int)
 		go func() {
-			select {
-			case err := <-errors:
-				if err != nil {
-					s.errorsChan <- err
+			for {
+				select {
+				case err := <-errorChan:
+					if err != nil {
+						return
+					}
+				case blk := <-responseProgress:
+					if ne.Path == blk.Path.String() {
+						fmt.Printf("edge:%v path=%s:%s \n", ne.Recursive, blk.Path.String(), blk.LastBlock.Link.String())
+						ci, _ := cid.Parse(blk.LastBlock.Link.String())
+						cids = append(cids, collectCids{
+							cid:       cidlink.Link{Cid: ci},
+							recursive: ne.Recursive,
+						})
+						completed <- 1
+					}
+				case <-ctx.Done():
 					return
 				}
 			}
 		}()
-
-		for blk := range responseProgress {
-			if ne.Path == blk.Path.String() {
-				fmt.Printf("edge:%v path=%s:%s \n", ne.Recursive, blk.Path.String(), blk.LastBlock.Link.String())
-				ci, _ := cid.Parse(blk.LastBlock.Link.String())
-				cCids = append(cCids, collectCids{
-					cid:       cidlink.Link{Cid: ci},
-					recursive: ne.Recursive,
-				})
-			}
-		}
+		<-completed
 	}
-	return cCids
+	return cids
 }
 
 // initParGraphSyncRequestManger
@@ -112,14 +128,13 @@ func (s *ParallelGraphRequestManger) startParGraphSyncRequestManger(ctx context.
 
 // StartRun you can also build a ParallelGraphRequestManger yourself and use this method to synchronize
 func (s *ParallelGraphRequestManger) StartRun(ctx context.Context) {
-	ctx, cancel := context.WithCancel(ctx)
 	for {
 		select {
 		case request := <-s.requestChan:
 			s.run(ctx, request)
 		default:
 			if !s.divideRequests(ctx) {
-				s.Close(cancel)
+				s.Close()
 				return
 			}
 		}
@@ -127,9 +142,8 @@ func (s *ParallelGraphRequestManger) StartRun(ctx context.Context) {
 }
 
 // Close the Manger
-func (s *ParallelGraphRequestManger) Close(cancel context.CancelFunc) {
+func (s *ParallelGraphRequestManger) Close() {
 	//todo more action
-	cancel()
 	fmt.Println("close")
 }
 func (s *ParallelGraphRequestManger) collectRequests(pathMap map[string]int64) {
