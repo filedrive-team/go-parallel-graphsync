@@ -160,21 +160,19 @@ func (s ExploreRecursive) Match(node datamodel.Node) (datamodel.Node, error) {
 }
 
 type exploreRecursiveContext struct {
-	path       string
 	edgesFound int
 }
 
 func (erc *exploreRecursiveContext) Link(s selector.Selector) bool {
 	_, ok := s.(selector.ExploreRecursiveEdge)
 	if ok {
-		//fmt.Println("found")
 		erc.edgesFound++
 	}
 	return ok
 }
 
 // ParseExploreRecursive assembles a Selector from a ExploreRecursive selector node
-func (er *ERContext) ParseExploreRecursive(n datamodel.Node) (selector.Selector, error) {
+func (er *ERParseContext) ParseExploreRecursive(n datamodel.Node) (selector.Selector, error) {
 	if n.Kind() != datamodel.Kind_Map {
 		return nil, fmt.Errorf("selector spec parse rejected: selector body must be a map")
 	}
@@ -191,19 +189,38 @@ func (er *ERContext) ParseExploreRecursive(n datamodel.Node) (selector.Selector,
 	if err != nil {
 		return nil, fmt.Errorf("selector spec parse rejected: sequence field must be present in ExploreRecursive selector")
 	}
+
 	erc := &exploreRecursiveContext{}
-	selector1, err := er.ePc.PushParent(erc).ParseSelector(sequence)
+	tmp := er.PushParent(erc)
+	selector1, err := tmp.ParseSelector(sequence)
 	if err != nil {
 		return nil, err
 	}
 	if erc.edgesFound == 0 {
 		return nil, fmt.Errorf("selector spec parse rejected: ExploreRecursive must have at least one ExploreRecursiveEdge")
 	}
-	er.collectPath(erc)
+	expPath := &exploreRecursivePathContext{
+		path:       newPathFromPathSegments(er.pathSegments),
+		isUnixfs:   er.isUnixfs,
+		notSupport: len(er.pathSegments) == 0,
+	}
+	limitNone := RecursionLimit{selector.RecursionLimit_None, 0}
+	// only support recursion limit none
+	if limit != limitNone {
+		expPath.notSupport = true
+	}
+	if !expPath.notSupport {
+		expPath.recursive, expPath.notSupport = checkNextSelector(selector1)
+	}
+	er.collectPath(expPath)
+
+	// todo need check if same, ??? I don't quite understand what that means.
+	er.explorePathContexts = append(er.explorePathContexts, tmp.explorePathContexts...)
+
 	var stopCondition *selector.Condition
 	stop, err := n.LookupByString(selector.SelectorKey_StopAt)
 	if err == nil {
-		condition, err := er.ePc.selPc.ParseCondition(stop)
+		condition, err := er.origin.ParseCondition(stop)
 		if err != nil {
 			return nil, err
 		}

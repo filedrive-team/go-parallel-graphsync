@@ -8,48 +8,13 @@ import (
 	"github.com/ipld/go-ipld-prime/node/basicnode"
 	"github.com/ipld/go-ipld-prime/traversal/selector"
 	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
-	selectorparse "github.com/ipld/go-ipld-prime/traversal/selector/parse"
 	textselector "github.com/ipld/go-ipld-selector-text-lite"
 	"golang.org/x/xerrors"
 	"regexp"
 	"strings"
 )
 
-func GetDataSelector(dps *string, matchPath bool) (datamodel.Node, error) {
-	sel := selectorparse.CommonSelector_ExploreAllRecursively
-	if dps != nil {
-
-		if strings.HasPrefix(string(*dps), "{") {
-			var err error
-			sel, err = selectorparse.ParseJSONSelector(string(*dps))
-			if err != nil {
-				return nil, xerrors.Errorf("failed to parse json-selector '%s': %w", *dps, err)
-			}
-		} else {
-			ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
-
-			selspec, err := textselector.SelectorSpecFromPath(
-				textselector.Expression(*dps), matchPath,
-
-				ssb.ExploreRecursive(
-					selector.RecursionLimitNone(),
-					ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())),
-				),
-			)
-			if err != nil {
-				return nil, xerrors.Errorf("failed to parse text-selector '%s': %w", *dps, err)
-			}
-
-			sel = selspec.Node()
-			fmt.Printf("partial retrieval of datamodel-path-selector %s/*\n", *dps)
-		}
-	}
-
-	return sel, nil
-}
-
-func GenerateDataSelector(dpsPath string, matchPath bool, optionalSubSel builder.SelectorSpec) (datamodel.Node, error) {
-	sel := selectorparse.CommonSelector_ExploreAllRecursively
+func GenerateDataSelectorSpec(dpsPath string, matchPath bool, optionalSubSel builder.SelectorSpec) (selspec builder.SelectorSpec, err error) {
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
 
 	subselAtTarget := ssb.ExploreRecursive(
@@ -59,7 +24,7 @@ func GenerateDataSelector(dpsPath string, matchPath bool, optionalSubSel builder
 	if optionalSubSel != nil {
 		subselAtTarget = optionalSubSel
 	}
-	selspec, err := textselector.SelectorSpecFromPath(
+	selspec, err = textselector.SelectorSpecFromPath(
 		textselector.Expression(dpsPath), matchPath,
 		subselAtTarget,
 	)
@@ -67,9 +32,47 @@ func GenerateDataSelector(dpsPath string, matchPath bool, optionalSubSel builder
 		return nil, xerrors.Errorf("failed to parse text-selector '%s': %w", dpsPath, err)
 	}
 
-	sel = selspec.Node()
+	return selspec, nil
+}
 
-	return sel, nil
+func GenerateSubRangeSelectorSpec(selPath string, start, end int64) (builder.SelectorSpec, error) {
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	subsel := ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+		specBuilder.Insert("Links", ssb.ExploreRange(start, end,
+			ssb.ExploreRecursive(selector.RecursionLimitNone(),
+				ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
+		))
+	})
+	return GenerateDataSelectorSpec(selPath, false, subsel)
+}
+
+func GenerateSubRangeSelector(selPath string, start, end int64) (datamodel.Node, error) {
+	selSpec, err := GenerateSubRangeSelectorSpec(selPath, start, end)
+	if err != nil {
+		return nil, err
+	}
+	return selSpec.Node(), nil
+}
+
+// UnixFSPathSelectorSpec creates a selector for a file/path inside of a UnixFS directory
+// if reification is setup on a link system
+func UnixFSPathSelectorSpec(path string, optionalSubselectorAtTarget builder.SelectorSpec) builder.SelectorSpec {
+	segments := strings.Split(path, "/")
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	ss := optionalSubselectorAtTarget
+	// if nothing is given - use an exact matcher
+	if ss == nil {
+		ss = ssb.Matcher()
+	}
+	selectorSoFar := ssb.ExploreInterpretAs("unixfs", ss)
+	for i := len(segments) - 1; i >= 0; i-- {
+		selectorSoFar = ssb.ExploreInterpretAs("unixfs",
+			ssb.ExploreFields(func(efsb builder.ExploreFieldsSpecBuilder) {
+				efsb.Insert(segments[i], selectorSoFar)
+			}),
+		)
+	}
+	return selectorSoFar
 }
 
 func CheckIfLinkSelector(sel ipld.Node) bool {
@@ -107,4 +110,20 @@ func CheckIfUnixfsSelector(sel ipld.Node) bool {
 		return false
 	}
 	return true
+}
+
+// UnixFSPathSelectorNotRecursive creates a selector for a file/path inside of a UnixFS directory not recursive
+// if reification is setup on a link system
+func UnixFSPathSelectorNotRecursive(path string) builder.SelectorSpec {
+	segments := strings.Split(path, "/")
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	selectorSoFar := ssb.Matcher()
+	for i := len(segments) - 1; i >= 0; i-- {
+		selectorSoFar = ssb.ExploreInterpretAs("unixfs",
+			ssb.ExploreFields(func(efsb builder.ExploreFieldsSpecBuilder) {
+				efsb.Insert(segments[i], selectorSoFar)
+			}),
+		)
+	}
+	return selectorSoFar
 }

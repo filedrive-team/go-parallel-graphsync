@@ -2,13 +2,13 @@ package parseselector
 
 import (
 	"fmt"
+	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
-	"github.com/ipld/go-ipld-prime/traversal"
 	"github.com/ipld/go-ipld-prime/traversal/selector"
 	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
 	textselector "github.com/ipld/go-ipld-selector-text-lite"
-	"reflect"
+	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
 )
@@ -42,86 +42,173 @@ func TestParseSelector(t *testing.T) {
 	selU1, _ := textselector.SelectorSpecFromPath("/0/Hash/Links", false, ssb.ExploreUnion(selU0, fromPath1))
 	selU2, _ := textselector.SelectorSpecFromPath("Links", false, ssb.ExploreUnion(selU1, fromPath4))
 
-	selUnix, _ := textselector.SelectorSpecFromPath("a/b/c", false, selSameDepth)
+	selRange, _ := util.GenerateSubRangeSelectorSpec("", 1, 3)
+	path3, _ := util.GenerateDataSelectorSpec("Links/3/Hash", true, nil)
+	selUnionRange := ssb.ExploreUnion(selRange, path3)
+
+	selIndex := ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+		specBuilder.Insert("Links", ssb.ExploreIndex(0, ssb.ExploreRecursive(selector.RecursionLimitNone(),
+			ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())))))
+	})
+	selUnionIndex := ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+		specBuilder.Insert("Links", ssb.ExploreUnion(ssb.ExploreIndex(0, ssb.ExploreRecursive(selector.RecursionLimitNone(),
+			ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())))),
+			ssb.ExploreIndex(5, ssb.ExploreRecursive(selector.RecursionLimitNone(),
+				ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))))))
+	})
+
+	selUnix := util.UnixFSPathSelectorSpec("dir/a.jpg", nil)
+
+	selLeft := ssb.ExploreRecursive(selector.RecursionLimitNone(),
+		ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+			specBuilder.Insert("Links", ssb.ExploreIndex(0, ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))))
+		}))
+
+	selRecursiveRange := ssb.ExploreRecursive(selector.RecursionLimitNone(),
+		ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+			specBuilder.Insert("Links", ssb.ExploreRange(0, 2, ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))))
+		}))
+
+	selLimit := ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+		specBuilder.Insert("Links", ssb.ExploreIndex(0, ssb.ExploreRecursive(selector.RecursionLimitDepth(10),
+			ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())))))
+	})
 
 	testCases := []struct {
-		name     string
-		selRes   builder.SelectorSpec
-		resPaths []string
+		name               string
+		srcSelSpec         builder.SelectorSpec
+		expectedPaths      []ExplorePath
+		expectedNotSupport bool
 	}{
 		{
-			name:   "same-depth",
-			selRes: selSameDepth,
-			resPaths: []string{"Links/0/Hash",
-				"Links/1/Hash",
+			name:       "same-depth",
+			srcSelSpec: selSameDepth,
+			expectedPaths: []ExplorePath{
+				{Path: "Links/0/Hash", Recursive: false},
+				{Path: "Links/1/Hash", Recursive: true},
 			},
 		},
 		{
-			name:   "diff-depth",
-			selRes: selDiffDepth,
-			resPaths: []string{"Links/0/Hash/Links/0/Hash",
-				"Links/3/Hash",
+			name:       "diff-depth",
+			srcSelSpec: selDiffDepth,
+			expectedPaths: []ExplorePath{
+				{Path: "Links/0/Hash/Links/0/Hash", Recursive: false},
+				{Path: "Links/3/Hash", Recursive: true},
 			},
 		},
 		{
-			name:   "diff-depth & same-path",
-			selRes: selDiffSamePath,
-			resPaths: []string{"Links/0/Hash/Links/0/Hash",
-				"Links/0/Hash/Links/1/Hash",
-				"Links/3/Hash",
+			name:       "diff-depth & same-path",
+			srcSelSpec: selDiffSamePath,
+			expectedPaths: []ExplorePath{
+				{Path: "Links/0/Hash/Links/0/Hash", Recursive: false},
+				{Path: "Links/0/Hash/Links/1/Hash", Recursive: true},
+				{Path: "Links/3/Hash", Recursive: true},
 			},
 		},
 		{
-			name:   "more",
-			selRes: selMore,
-			resPaths: []string{"Links/0/Hash/Links/0/Hash",
-				"Links/0/Hash/Links/1/Hash",
-				"Links/0/Hash/Links/2/Hash",
-				"Links/2/Hash/Links/2/Hash",
-				"Links/4/Hash/Links/1/Hash",
-				"Links/3/Hash",
+			name:       "more",
+			srcSelSpec: selMore,
+			expectedPaths: []ExplorePath{
+				{Path: "Links/0/Hash/Links/0/Hash", Recursive: false},
+				{Path: "Links/0/Hash/Links/1/Hash", Recursive: true},
+				{Path: "Links/0/Hash/Links/2/Hash", Recursive: true},
+				{Path: "Links/2/Hash/Links/2/Hash", Recursive: true},
+				{Path: "Links/4/Hash/Links/1/Hash", Recursive: true},
+				{Path: "Links/3/Hash", Recursive: true},
 			},
 		},
 		{
-			name:   "union-union",
-			selRes: selU2,
-			resPaths: []string{"Links/0/Hash/Links/1/Hash/Links/0/Hash",
-				"Links/0/Hash/Links/1/Hash/Links/1/Hash",
-				"Links/0/Hash/Links/0/Hash",
-				"Links/3/Hash",
+			name:       "union-union",
+			srcSelSpec: selU2,
+			expectedPaths: []ExplorePath{
+				{Path: "Links/0/Hash/Links/1/Hash/Links/0/Hash", Recursive: false},
+				{Path: "Links/0/Hash/Links/1/Hash/Links/1/Hash", Recursive: true},
+				{Path: "Links/0/Hash/Links/0/Hash", Recursive: false},
+				{Path: "Links/3/Hash", Recursive: true},
 			},
 		},
 		{
-			name:   "unix",
-			selRes: selUnix,
-			resPaths: []string{
-				"a/b/c/Links/0/Hash",
-				"a/b/c/Links/1/Hash",
+			name:       "range",
+			srcSelSpec: selRange,
+			expectedPaths: []ExplorePath{
+				{Path: "Links/1/Hash", Recursive: true},
+				{Path: "Links/2/Hash", Recursive: true},
 			},
+		},
+		{
+			name:       "union-range",
+			srcSelSpec: selUnionRange,
+			expectedPaths: []ExplorePath{
+				{Path: "Links/1/Hash", Recursive: true},
+				{Path: "Links/2/Hash", Recursive: true},
+				{Path: "Links/3/Hash", Recursive: true},
+			},
+		},
+		{
+			name:       "index",
+			srcSelSpec: selIndex,
+			expectedPaths: []ExplorePath{
+				{Path: "Links/0/Hash", Recursive: true},
+			},
+		},
+		{
+			name:       "union-index",
+			srcSelSpec: selUnionIndex,
+			expectedPaths: []ExplorePath{
+				{Path: "Links/0/Hash", Recursive: true},
+				{Path: "Links/5/Hash", Recursive: true},
+			},
+		},
+		{
+			name:       "unixfs",
+			srcSelSpec: selUnix,
+			expectedPaths: []ExplorePath{
+				{Path: "dir/a.jpg", Recursive: true, IsUnixfs: true},
+			},
+		},
+		{
+			name:               "not-support-index",
+			srcSelSpec:         selLeft,
+			expectedPaths:      nil,
+			expectedNotSupport: true,
+		},
+		{
+			name:               "not-support-range",
+			srcSelSpec:         selRecursiveRange,
+			expectedPaths:      nil,
+			expectedNotSupport: true,
+		},
+		{
+			name:               "not-support-limit",
+			srcSelSpec:         selLimit,
+			expectedPaths:      nil,
+			expectedNotSupport: true,
 		},
 	}
-	links, err := traversal.SelectLinks(selMore.Node())
-	if err != nil {
-		return
-	}
-	fmt.Println(links)
 	for _, tc := range testCases {
 		t.Run(tc.name, func(s *testing.T) {
 			var str strings.Builder
-			dagjson.Encode(tc.selRes.Node(), &str)
+			dagjson.Encode(tc.srcSelSpec.Node(), &str)
 			fmt.Println(str.String())
-			var er = &ERContext{}
-			_, err := er.ParseSelector(tc.selRes.Node())
+			er := &ERParseContext{}
+			_, err := er.ParseSelector(tc.srcSelSpec.Node())
 			if err != nil {
 				t.Fatal(err)
 			}
-			var paths []string
-			for _, ec := range er.eCtx {
-				fmt.Println(ec.path, ec.edgesFound)
-				paths = append(paths, ec.path)
+			var paths []ExplorePath
+			notSupport := false
+			for _, ec := range er.explorePathContexts {
+				if ec.NotSupport() {
+					notSupport = true
+				}
+				paths = append(paths, ec.Get()...)
 			}
-			if !reflect.DeepEqual(paths, tc.resPaths) {
-				t.Fatal("should equal")
+			require.Equal(s, tc.expectedNotSupport, notSupport)
+			if !notSupport {
+				require.Equal(s, len(tc.expectedPaths), len(paths))
+				for _, path := range paths {
+					require.Contains(s, tc.expectedPaths, path)
+				}
 			}
 		})
 	}

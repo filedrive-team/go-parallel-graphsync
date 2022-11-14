@@ -6,7 +6,13 @@ import (
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/filedrive-team/go-parallel-graphsync/util/parseselector"
+	"github.com/ipfs/go-cid"
+	"github.com/ipfs/go-datastore"
+	dssync "github.com/ipfs/go-datastore/sync"
 	"github.com/ipfs/go-graphsync"
+	blockstore "github.com/ipfs/go-ipfs-blockstore"
+	"github.com/ipld/go-ipld-prime"
+	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
 	"github.com/ipld/go-ipld-prime/traversal/selector"
@@ -175,15 +181,20 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 	selmore3, _ := textselector.SelectorSpecFromPath("/4/Hash/Links/1/Hash", false, all)
 	selMore, _ := textselector.SelectorSpecFromPath("Links", false, ssb.ExploreUnion(selmore1, selmore2, selmore3, fromPath4))
 
+	selRange1 := ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+		specBuilder.Insert("Links", ssb.ExploreRange(1, 4,
+			ssb.ExploreIndex(0, ssb.Matcher())))
+	}).Node()
+	selRange2, _ := util.GenerateSubRangeSelector("Links/0/Hash", 1, 4)
 	testCases := []struct {
 		name     string
-		selRes   builder.SelectorSpec
+		selRes   ipld.Node
 		resPaths []string
 		cids     []string
 	}{
 		{
 			name:   "same-depth",
-			selRes: selSameDepth,
+			selRes: selSameDepth.Node(),
 			resPaths: []string{"Links/0/Hash",
 				"Links/1/Hash",
 			},
@@ -193,7 +204,7 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 		},
 		{
 			name:   "diff-depth",
-			selRes: selDiffDepth,
+			selRes: selDiffDepth.Node(),
 			resPaths: []string{"Links/0/Hash/Links/0/Hash",
 				"Links/3/Hash",
 			},
@@ -203,7 +214,7 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 		},
 		{
 			name:   "diff-depth & same-path",
-			selRes: selDiffSamePath,
+			selRes: selDiffSamePath.Node(),
 			resPaths: []string{"Links/0/Hash/Links/0/Hash",
 				"Links/0/Hash/Links/1/Hash",
 				"Links/3/Hash",
@@ -215,7 +226,7 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 		},
 		{
 			name:   "more",
-			selRes: selMore,
+			selRes: selMore.Node(),
 			resPaths: []string{"Links/0/Hash/Links/0/Hash",
 				"Links/0/Hash/Links/1/Hash",
 				"Links/0/Hash/Links/2/Hash",
@@ -231,16 +242,46 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 				"QmYFfDQ4PXSi5jb1Vci62Tt98rsHDNDkEWc69x1CUVbpr2",
 			},
 		},
+		{
+			name:   "range&index",
+			selRes: selRange1,
+			resPaths: []string{"Links/0/Hash",
+				"Links/1/Hash",
+				"Links/2/Hash",
+				"Links/3/Hash",
+			},
+			cids: []string{"QmX6WsRCk9ANtHasCWbMDuSWJQg7bhTaYV4Qp7sjnC89vR",
+				"QmYFfDQ4PXSi5jb1Vci62Tt98rsHDNDkEWc69x1CUVbpr2",
+				"QmRoq4iMc92NhXyg1ei3f1CpQTg9pGEhnDjrr89ytFcjdi",
+				"QmTf25Um3uU26DcTBjYkZBYFUt3oRNAXHMnbnTcDc46Lfr",
+			},
+		},
+		{
+			name:   "range",
+			selRes: selRange2,
+			resPaths: []string{"Links/0/Hash/Links/1/Hash",
+				"Links/0/Hash/Links/2/Hash",
+				"Links/0/Hash/Links/3/Hash",
+			},
+			cids: []string{
+				"Qme3ANCDLAvasvCQDWH2QUD62EHHBi5mtSwdsycsJQNSiM",
+				"QmRkRCHHLghBYFPNxEX4CBgL8wfjtpMGXgwfmQb8WN2Y4o",
+				"QmW7SsibBcHkkeVGHzbFbhE8bacn1RpC69zvRBPrnR28wj",
+			},
+		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			edge, nedge, err := parseselector.GenerateSelectors(tc.selRes.Node())
+			var sss strings.Builder
+			dagjson.Encode(tc.selRes, &sss)
+			fmt.Println(sss.String())
+			parsed, err := parseselector.GenerateSelectors(tc.selRes)
 			if err != nil {
 				return
 			}
 			var cids []string
-			for i, ne := range nedge {
-				responseProgress, errors := bigCarParExchange.Request(context.TODO(), bigCarAddrInfos[i%3].ID, cidlink.Link{Cid: bigCarRootCid}, ne)
+			for i, ne := range parsed {
+				responseProgress, errors := bigCarParExchange.Request(context.TODO(), bigCarAddrInfos[i%3].ID, cidlink.Link{Cid: bigCarRootCid}, ne.Sel)
 				go func() {
 					select {
 					case err := <-errors:
@@ -257,8 +298,101 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 					}
 				}
 			}
-			for _, ne := range edge {
-				responseProgress, errors := bigCarParExchange.Request(context.TODO(), bigCarAddrInfos[0].ID, cidlink.Link{Cid: bigCarRootCid}, ne)
+			if !pathInPath(cids, tc.cids) {
+				t.Fatal("fail")
+			}
+		})
+
+	}
+}
+
+func TestSimpleParseGivenUnixFSSelector(t *testing.T) {
+	serverbs, err := loadCarV2Blockstore("./test.car")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, _ := cid.Parse("QmfDBQsFWphnYYxjdAjqnqhV1fWzH7DKKamPnC1rdXupma")
+	mainCtx := context.TODO()
+	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9236, serverbs, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyFile := path.Join(os.TempDir(), "gs-unixfs-key")
+	ds := datastore.NewMapDatastore()
+	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
+
+	host, gscli, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9241", keyFile, bs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gscli.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
+		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
+	})
+
+	host.Peerstore().AddAddr(addrInfos[0].ID, addrInfos[0].Addrs[0], peerstore.PermanentAddrTTL)
+	//sel := util.UnixFSPathSelectorNotRecursive("1.jpg")
+	//"fixtures/loremfolder/subfolder/lorem.txt"
+	sel1 := util.UnixFSPathSelectorSpec("video2507292463.mp4.bak.mp4", nil)
+	sel2, _ := textselector.SelectorSpecFromPath("Links/1/Hash", false, nil)
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	selUnionLinksUnixfs := ssb.ExploreUnion(sel1, sel2)
+	selRange1 := ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+		specBuilder.Insert("Links", ssb.ExploreRange(1, 4,
+			ssb.Matcher()))
+	})
+	selUnionRangeUnixfs := ssb.ExploreUnion(sel1, selRange1)
+	//sel := unixfsnode.UnixFSPathSelector("1.jpg")
+	var s strings.Builder
+	dagjson.Encode(selUnionLinksUnixfs.Node(), &s)
+	t.Logf(s.String())
+	//todo more testcase
+	testCases := []struct {
+		name     string
+		selRes   ipld.Node
+		resPaths []string
+		cids     []string
+	}{
+		{
+			name:     "unixfs",
+			selRes:   sel1.Node(),
+			resPaths: []string{"video2507292463.mp4.bak.mp4"},
+			cids: []string{
+				"QmeZd6zzw3JbB2eDNwrhZpPzpYd4gLbcenJuNhw9ghoMUo",
+			},
+		},
+		{
+			name:     "unixfs-Links",
+			selRes:   selUnionLinksUnixfs.Node(),
+			resPaths: []string{"video2507292463.mp4.bak.mp4", "Links/1/Hash"},
+			cids: []string{
+				"QmeZd6zzw3JbB2eDNwrhZpPzpYd4gLbcenJuNhw9ghoMUo",
+				"QmQuUub9mC28G2GG9CBL8DUDFbFCZgPvvULaL3obm6JvvF",
+			},
+		},
+		{
+			name:     "unixfs-range",
+			selRes:   selUnionRangeUnixfs.Node(),
+			resPaths: []string{"video2507292463.mp4.bak.mp4", "Links/1/Hash"},
+			cids: []string{
+				"QmeZd6zzw3JbB2eDNwrhZpPzpYd4gLbcenJuNhw9ghoMUo",
+				"QmeZd6zzw3JbB2eDNwrhZpPzpYd4gLbcenJuNhw9ghoMUo",
+				"QmSBk1KqHZw8Wnq2v86SApj7pg7GCVtKKrzUFd1B5Dhoe6",
+				"QmQuUub9mC28G2GG9CBL8DUDFbFCZgPvvULaL3obm6JvvF",
+			},
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			parsed, err := parseselector.GenerateSelectors(tc.selRes)
+			if err != nil {
+				return
+			}
+			var cids []string
+			for _, ne := range parsed {
+				var str strings.Builder
+				dagjson.Encode(ne.Sel, &str)
+				fmt.Println(str.String())
+				responseProgress, errors := gscli.Request(context.TODO(), addrInfos[0].ID, cidlink.Link{Cid: root}, ne.Sel)
 				go func() {
 					select {
 					case err := <-errors:
@@ -269,14 +403,14 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 				}()
 
 				for blk := range responseProgress {
-
-					if strings.HasSuffix(blk.Path.String(), "Hash") && blk.LastBlock.Link != nil {
-						//fmt.Printf("edge path=%s:%s \n", blk.Path.String(), blk.LastBlock.Link.String())
+					if blk.LastBlock.Link != nil {
+						fmt.Printf("path=%s\n", blk.Path.String())
 						cids = append(cids, blk.LastBlock.Link.String())
 					}
 				}
+
 			}
-			if !pathInPath(cids, tc.cids) {
+			if !pathInPath(tc.cids, cids) {
 				t.Fatal("fail")
 			}
 		})

@@ -54,15 +54,15 @@ func TestParallelGraphSync(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sel1, err := GenerateSubRangeSelector("Links/0/Hash", 0, 3)
+	sel1, err := util.GenerateSubRangeSelector("Links/0/Hash", 0, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sel2, err := GenerateSubRangeSelector("Links/0/Hash", 3, 7)
+	sel2, err := util.GenerateSubRangeSelector("Links/0/Hash", 3, 7)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sel3, err := GenerateSubRangeSelector("Links/0/Hash", 7, 11)
+	sel3, err := util.GenerateSubRangeSelector("Links/0/Hash", 7, 11)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,15 +145,15 @@ func BenchmarkGraphSync(b *testing.B) {
 		hookActions.UsePersistenceOption("newLinkSys")
 	})
 
-	sel1, err := GenerateSubRangeSelector("", 0, 100)
+	sel1, err := util.GenerateSubRangeSelector("", 0, 100)
 	if err != nil {
 		b.Fatal(err)
 	}
-	sel2, err := GenerateSubRangeSelector("", 100, 200)
+	sel2, err := util.GenerateSubRangeSelector("", 100, 200)
 	if err != nil {
 		b.Fatal(err)
 	}
-	sel3, err := GenerateSubRangeSelector("", 200, 300)
+	sel3, err := util.GenerateSubRangeSelector("", 200, 300)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func BenchmarkGraphSync(b *testing.B) {
 			b.StartTimer()
 
 			ctx := context.Background()
-			sel, err := GenerateSubRangeSelector("", 0, 300)
+			sel, err := util.GenerateSubRangeSelector("", 0, 300)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -270,10 +270,6 @@ func TestParallelGraphSyncExploreRecursiveLeftNode(t *testing.T) {
 	})
 
 	selPath := "Links/0/Hash"
-	dal, err := util.GetDataSelector(&selPath, false)
-	if err != nil {
-		t.Fatal(err)
-	}
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
 	subsel := ssb.ExploreRecursive(selector.RecursionLimitNone(),
 		ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
@@ -283,9 +279,12 @@ func TestParallelGraphSyncExploreRecursiveLeftNode(t *testing.T) {
 			),
 			)
 		}))
-	dal, err = util.GenerateDataSelector(selPath, false, subsel)
+	selSpec, err := util.GenerateDataSelectorSpec(selPath, false, subsel)
+	if err != nil {
+		t.Fatal(err)
+	}
 	sels := []datamodel.Node{
-		dal,
+		selSpec.Node(),
 	}
 	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
 	for i := 0; i < len(sels); i++ {
@@ -359,15 +358,15 @@ func TestParallelGraphSyncControl(t *testing.T) {
 		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
 	})
 
-	sel1, err := GenerateSubRangeSelector("", 0, 100)
+	sel1, err := util.GenerateSubRangeSelector("", 0, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sel2, err := GenerateSubRangeSelector("", 100, 200)
+	sel2, err := util.GenerateSubRangeSelector("", 100, 200)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sel3, err := GenerateSubRangeSelector("", 200, 300)
+	sel3, err := util.GenerateSubRangeSelector("", 200, 300)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -477,17 +476,6 @@ func CreateRandomBytesBlockStore(ctx context.Context, dataSize int) (blockstore.
 	}
 
 	return bs, nd.Cid()
-}
-
-func GenerateSubRangeSelector(selPath string, start, end int64) (datamodel.Node, error) {
-	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
-	subsel := ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
-		specBuilder.Insert("Links", ssb.ExploreRange(start, end,
-			ssb.ExploreRecursive(selector.RecursionLimitNone(),
-				ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
-		))
-	})
-	return util.GenerateDataSelector(selPath, false, subsel)
 }
 
 //                                       O
