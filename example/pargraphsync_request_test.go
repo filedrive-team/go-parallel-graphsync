@@ -48,7 +48,7 @@ func TestSimpleParGraphSyncRequestManger(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			err := requestmanger.StartPraGraphSync(context.TODO(), bigCarParExchange, tc.sel, tc.ci, parallelGraphServerManger)
 			require.Equal(t, tc.err, err)
-			time.Sleep(time.Second * 10) //for testing delay
+			time.Sleep(time.Second * 5) //for testing delay
 		})
 	}
 

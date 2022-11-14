@@ -52,6 +52,7 @@ func StartPraGraphSync(ctx context.Context, pgs pargraphsync.ParallelGraphExchan
 		return err
 	}
 	s := NewParGraphSyncRequestManger(pgs, root, parallelGraphServerManger)
+	s.RegisterCollectSpeedInfo(ctx)
 	ctx, cancel := context.WithCancel(ctx)
 	var completed = make(chan bool)
 	go func() {
@@ -109,9 +110,14 @@ func (s *ParallelGraphRequestManger) collectResponses(ctx context.Context, ne pa
 			if ne.Path == blk.Path.String() {
 				fmt.Printf("edge:%v path=%s:%s \n", ne.Recursive, blk.Path.String(), blk.LastBlock.Link.String())
 				ci, _ := cid.Parse(blk.LastBlock.Link.String())
+				// check if blk have sub node,Need to check? Or is this correct to check?
+				re := ne.Recursive
+				if nd, err := blk.Node.LookupByString("Links"); err != nil || nd.Length() == 0 {
+					re = false
+				}
 				return collectCid{
 					cid:       cidlink.Link{Cid: ci},
-					recursive: ne.Recursive,
+					recursive: re,
 				}
 			}
 		}
@@ -120,7 +126,6 @@ func (s *ParallelGraphRequestManger) collectResponses(ctx context.Context, ne pa
 
 // initParGraphSyncRequestManger
 func (s *ParallelGraphRequestManger) startParGraphSyncRequestManger(ctx context.Context, root cidlink.Link) {
-	s.RegisterCollectSpeedInfo(ctx)
 	s.requestChan <- []pargraphsync.RequestParam{{PeerId: s.pGServerManager.GetIdlePeer(ctx), Root: root, Selector: util.LeftSelector("")}}
 	s.StartRun(ctx)
 }
@@ -185,10 +190,10 @@ func (s *ParallelGraphRequestManger) checkRequests(path string) bool {
 }
 
 func (s *ParallelGraphRequestManger) run(ctx context.Context, params []pargraphsync.RequestParam) {
-	responseProgress, errors := s.parallelGraphExchange.RequestMany(ctx, params)
+	responseProgress, errorsChan := s.parallelGraphExchange.RequestMany(ctx, params)
 	go func() {
 		select {
-		case err := <-errors:
+		case err := <-errorsChan:
 			if err != nil {
 				return
 			}
