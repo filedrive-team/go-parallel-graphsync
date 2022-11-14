@@ -22,6 +22,7 @@ func TestSimpleParGraphSyncRequestManger(t *testing.T) {
 	all := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
 	sel, _ := textselector.SelectorSpecFromPath("Links/2/Hash", false, all)
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	go parallelGraphServerManger.RecordDelay(ctx, time.Second*5)
 	cidNotFound, _ := cid.Parse("QmSvtt6abwrp3MybYqHHA4BdFjjuLBABXjLEVQKpMUfUU7")
 	testCases := []struct {
@@ -44,12 +45,13 @@ func TestSimpleParGraphSyncRequestManger(t *testing.T) {
 		},
 	}
 	for _, tc := range testCases {
-		err := requestmanger.StartPraGraphSync(context.TODO(), bigCarParExchange, tc.sel, tc.ci, parallelGraphServerManger)
-		require.Equal(t, tc.err, err)
+		t.Run(tc.name, func(t *testing.T) {
+			err := requestmanger.StartPraGraphSync(context.TODO(), bigCarParExchange, tc.sel, tc.ci, parallelGraphServerManger)
+			require.Equal(t, tc.err, err)
+			time.Sleep(time.Second * 10) //for testing delay
+		})
 	}
 
-	time.Sleep(time.Second * 10) //for testing delay
-	cancel()
 }
 func TestParGraphSyncRequestMangerSubtree(t *testing.T) {
 	sel1, _ := textselector.SelectorSpecFromPath("Links/2/Hash", false, nil)
