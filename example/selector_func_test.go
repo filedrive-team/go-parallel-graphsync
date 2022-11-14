@@ -3,7 +3,6 @@ package example
 import (
 	"context"
 	"fmt"
-	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
 	"github.com/filedrive-team/go-parallel-graphsync/gsrespserver"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/filedrive-team/go-parallel-graphsync/util/parseselector"
@@ -27,32 +26,35 @@ import (
 	"testing"
 )
 
-func startWithBigCar() (pargraphsync.ParallelGraphExchange, []peer.AddrInfo) {
-	mainCtx, cancel := context.WithCancel(context.TODO())
-	defer cancel()
-	bs, err := loadCarV2Blockstore("big-v2.car")
-	if err != nil {
-		panic(err)
-	}
-	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, 3, 9820, bs, false)
-	if err != nil {
-		panic(err)
-	}
-	keyFile := path.Join(os.TempDir(), "gs-key9720")
-	host, pgs, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9720", keyFile, bs)
-	if err != nil {
-		panic(err)
-	}
+func startWithBigCar(ctx context.Context) {
+	//mainCtx, cancel := context.WithCancel(context.Background())
+	//defer cancel()
 
-	//this is for testing result if right , so other Register is not important.
-	pgs.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
+	addrInfos, err := startSomeGraphSyncServices(ctx, ServicesNum, 9030, false, "big-v2.car")
+	if err != nil {
+		panic(err)
+	}
+	bigCarAddrInfos = addrInfos
+
+	keyFile := path.Join(os.TempDir(), "gs-key-big")
+	ds := datastore.NewMapDatastore()
+	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
+	bigCarHost, bigCarParExchange, err = startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9040", keyFile, bs)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("requester peerId=%s\n", bigCarHost.ID())
+
+	bigCarParExchange.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
 		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
 	})
-	for _, addr := range addrInfos {
-		host.Peerstore().AddAddr(addr.ID, addr.Addrs[0], peerstore.PermanentAddrTTL)
+	// QmTTSVQrNxBvQDXevh3UvToezMw1XQ5hvTMCwpDc8SDnNT
+	// Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y
+	bigCarRootCid, _ = cid.Parse("QmSvtt6abwrp3MybYqHHA4BdFjjuLBABXjLEVQKpMUfUU8")
+	for _, addrInfo := range bigCarAddrInfos {
+		bigCarHost.Peerstore().AddAddr(addrInfo.ID, addrInfo.Addrs[0], peerstore.PermanentAddrTTL)
 	}
-	parallelGraphServerManger = gsrespserver.NewParallelGraphServerManger(addrInfos, host)
-	return pgs, addrInfos
+	parallelGraphServerManger = gsrespserver.NewParallelGraphServerManger(bigCarAddrInfos, bigCarHost)
 }
 
 // since child nodes are automatically collected and synchronized in M2, this test method is no longer applicable

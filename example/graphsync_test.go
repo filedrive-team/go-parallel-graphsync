@@ -51,6 +51,7 @@ var globalBs blockstore.Blockstore
 var bigCarRootCid cid.Cid
 var bigCarParExchange pargraphsync.ParallelGraphExchange
 var bigCarAddrInfos []peer.AddrInfo
+var bigCarHost host.Host
 var parallelGraphServerManger *gsrespserver.ParallelGraphServerManger
 
 const ServicesNum = 3
@@ -129,8 +130,7 @@ func TestMain(m *testing.M) {
 	for _, addrInfo := range addrInfos {
 		globalHost.Peerstore().AddAddr(addrInfo.ID, addrInfo.Addrs[0], peerstore.PermanentAddrTTL)
 	}
-	bigCarRootCid, _ = cid.Parse("QmSvtt6abwrp3MybYqHHA4BdFjjuLBABXjLEVQKpMUfUU8")
-	bigCarParExchange, bigCarAddrInfos = startWithBigCar()
+	startWithBigCar(mainCtx)
 	os.Exit(m.Run())
 }
 

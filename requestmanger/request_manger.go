@@ -19,9 +19,8 @@ import (
 )
 
 const (
-	LeafLinksTemplate                = "/%v/Hash/Links"
-	CheckLinksTemplate               = "/%v/Hash"
-	CollectSelectorSubTreeCidTimeOut = time.Second * 10
+	LeafLinksTemplate  = "/%v/Hash/Links"
+	CheckLinksTemplate = "/%v/Hash"
 )
 
 type ParallelGraphRequestManger struct {
@@ -52,71 +51,71 @@ func StartPraGraphSync(ctx context.Context, pgs pargraphsync.ParallelGraphExchan
 	if err != nil {
 		return err
 	}
-	//ctxTimeout, cancel := context.WithTimeout(ctx, CollectSelectorSubTreeCidTimeOut)
-	cCids := CollectSelectorSubTreeCid(ctx, selectors, pgs, root, parallelGraphServerManger)
-	if len(cCids) == 0 {
-		return errors.New("timeout to collect")
-	}
 	s := NewParGraphSyncRequestManger(pgs, root, parallelGraphServerManger)
 	ctx, cancel := context.WithCancel(ctx)
+	var completed = make(chan bool)
 	go func() {
-		select {
-		case err = <-s.errorsChan:
-			if err != nil {
-				cancel()
-				return
+		defer cancel()
+		cCids := s.collectSelectorSubTreeCid(ctx, selectors)
+		for _, ci := range cCids {
+			if ci.recursive {
+				s.startParGraphSyncRequestManger(ctx, ci.cid)
 			}
-		case <-ctx.Done():
-			cancel()
-			return
 		}
+		completed <- true
 	}()
-	for _, ci := range cCids {
-		if ci.recursive {
-			s.startParGraphSyncRequestManger(ctx, ci.cid)
+	select {
+	case err = <-s.errorsChan:
+		if err != nil {
+			fmt.Println(err)
+			return err
 		}
+	case <-completed:
+		return nil
+	case <-ctx.Done():
+		return errors.New("context cancel")
 	}
-	return err
+	return nil
 }
 
-type collectCids struct {
+type collectCid struct {
 	cid       cidlink.Link
 	recursive bool
 }
 
-func CollectSelectorSubTreeCid(ctx context.Context, selectors []parseselector.ParsedSelectors, pgs pargraphsync.ParallelGraphExchange,
-	root cidlink.Link, parallelGraphServerManger *gsrespserver.ParallelGraphServerManger) []collectCids {
-	var cids []collectCids
-	ctxTimeout, cancel := context.WithTimeout(ctx, CollectSelectorSubTreeCidTimeOut)
-	defer cancel()
+func (s *ParallelGraphRequestManger) collectSelectorSubTreeCid(ctx context.Context, selectors []parseselector.ParsedSelectors) []collectCid {
+	var cids []collectCid
+	var nilCollectCid collectCid
 	for _, ne := range selectors {
-		responseProgress, errorChan := pgs.Request(ctxTimeout, parallelGraphServerManger.GetIdlePeer(ctx), root, ne.Sel)
-		completed := make(chan int)
-		go func() {
-			for {
-				select {
-				case err := <-errorChan:
-					if err != nil {
-						return
-					}
-				case blk := <-responseProgress:
-					if ne.Path == blk.Path.String() {
-						fmt.Printf("edge:%v path=%s:%s \n", ne.Recursive, blk.Path.String(), blk.LastBlock.Link.String())
-						ci, _ := cid.Parse(blk.LastBlock.Link.String())
-						cids = append(cids, collectCids{
-							cid:       cidlink.Link{Cid: ci},
-							recursive: ne.Recursive,
-						})
-						completed <- 1
-					}
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
-		<-completed
+		cCid := s.collectResponses(ctx, ne)
+		if cCid != nilCollectCid {
+			cids = append(cids, cCid)
+		} else {
+			return nil
+		}
 	}
 	return cids
+}
+func (s *ParallelGraphRequestManger) collectResponses(ctx context.Context, ne parseselector.ParsedSelectors) collectCid {
+	responseProgress, errorChan := s.parallelGraphExchange.Request(ctx, s.pGServerManager.GetIdlePeer(ctx), s.rootCid, ne.Sel)
+	for {
+		select {
+		case err := <-errorChan:
+			if err != nil {
+				s.errorsChan <- err
+				return collectCid{}
+			}
+		case blk := <-responseProgress:
+			if ne.Path == blk.Path.String() {
+				fmt.Printf("edge:%v path=%s:%s \n", ne.Recursive, blk.Path.String(), blk.LastBlock.Link.String())
+				ci, _ := cid.Parse(blk.LastBlock.Link.String())
+				return collectCid{
+					cid:       cidlink.Link{Cid: ci},
+					recursive: ne.Recursive,
+				}
+			}
+		}
+	}
 }
 
 // initParGraphSyncRequestManger

@@ -5,6 +5,7 @@ import (
 	"github.com/filedrive-team/go-parallel-graphsync/requestmanger"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/ipfs/go-cid"
+	"github.com/ipfs/go-graphsync"
 	"github.com/ipld/go-ipld-prime"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
@@ -13,22 +14,42 @@ import (
 	textselector "github.com/ipld/go-ipld-selector-text-lite"
 	"github.com/stretchr/testify/require"
 	"testing"
+	"time"
 )
 
 func TestSimpleParGraphSyncRequestManger(t *testing.T) {
-	//var log = logging.Logger("aaaa")
-	//logging.SetAllLoggers(logging.LevelDebug)
-	//log.Debugf("aaa")
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
 	all := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
 	sel, _ := textselector.SelectorSpecFromPath("Links/2/Hash", false, all)
-	//ctx, cancel := context.WithCancel(context.Background())
-	//go parallelGraphServerManger.RecordDelay(ctx, time.Second*5)
-	mmm, _ := cid.Parse("QmSvtt6abwrp3MybYqHHA4BdFjjuLBABXjLEVQKpMUfUU8")
-	err := requestmanger.StartPraGraphSync(context.Background(), bigCarParExchange, sel.Node(), cidlink.Link{Cid: mmm}, parallelGraphServerManger)
-	require.Equal(t, nil, err)
-	//time.Sleep(time.Second * 10) //for testing delay
-	//cancel()
+	ctx, cancel := context.WithCancel(context.Background())
+	go parallelGraphServerManger.RecordDelay(ctx, time.Second*5)
+	cidNotFound, _ := cid.Parse("QmSvtt6abwrp3MybYqHHA4BdFjjuLBABXjLEVQKpMUfUU7")
+	testCases := []struct {
+		name string
+		sel  ipld.Node
+		ci   cidlink.Link
+		err  error
+	}{
+		{
+			name: "cid-notfound",
+			sel:  sel.Node(),
+			ci:   cidlink.Link{Cid: cidNotFound},
+			err:  graphsync.RequestFailedContentNotFoundErr{},
+		},
+		{
+			name: "cid-correct",
+			sel:  sel.Node(),
+			ci:   cidlink.Link{Cid: bigCarRootCid},
+			err:  nil,
+		},
+	}
+	for _, tc := range testCases {
+		err := requestmanger.StartPraGraphSync(context.TODO(), bigCarParExchange, tc.sel, tc.ci, parallelGraphServerManger)
+		require.Equal(t, tc.err, err)
+	}
+
+	time.Sleep(time.Second * 10) //for testing delay
+	cancel()
 }
 func TestParGraphSyncRequestMangerSubtree(t *testing.T) {
 	sel1, _ := textselector.SelectorSpecFromPath("Links/2/Hash", false, nil)
