@@ -195,6 +195,7 @@ func (s *ParallelGraphRequestManger) run(ctx context.Context, params []pargraphs
 		select {
 		case err := <-errorsChan:
 			if err != nil {
+				s.errorsChan <- err
 				return
 			}
 		}
