@@ -164,7 +164,7 @@ func BenchmarkGraphSync(b *testing.B) {
 	}
 	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
 	for i := 0; i < ServicesNum; i++ {
-		host.Peerstore().AddAddr(addrInfos[i].ID, globalAddrInfos[i].Addrs[0], peerstore.PermanentAddrTTL)
+		host.Peerstore().AddAddr(addrInfos[i].ID, addrInfos[i].Addrs[0], peerstore.PermanentAddrTTL)
 
 		params = append(params, pargraphsync.RequestParam{
 			PeerId:   addrInfos[i].ID,
@@ -172,6 +172,19 @@ func BenchmarkGraphSync(b *testing.B) {
 			Selector: sels[i],
 		})
 	}
+
+	// graphsync init
+	keyFile2 := path.Join(os.TempDir(), "gscli-key2")
+	host2, gscli2, err := startGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9121", keyFile2, bs)
+	if err != nil {
+		b.Fatal(err)
+	}
+	gscli2.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
+		//	fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
+		hookActions.UsePersistenceOption("newLinkSys")
+	})
+	host2.Peerstore().AddAddr(addrInfos[0].ID, addrInfos[0].Addrs[0], peerstore.PermanentAddrTTL)
+
 	b.Run("request to 3 service", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -197,17 +210,24 @@ func BenchmarkGraphSync(b *testing.B) {
 			}()
 			for range responseProgress {
 			}
+			has, err := membs.Has(mainCtx, rootCid)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if !has {
+				b.Fatal("not pass")
+			}
 		}
 	})
 	b.Run("request to 1 service", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			b.StopTimer()
-			gscli.UnregisterPersistenceOption("newLinkSys")
+			gscli2.UnregisterPersistenceOption("newLinkSys")
 			memds := datastore.NewMapDatastore()
 			membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
 			newlsys := storeutil.LinkSystemForBlockstore(membs)
-			if err := gscli.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+			if err := gscli2.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
 				b.Fatal(err)
 			}
 			b.StartTimer()
@@ -217,7 +237,7 @@ func BenchmarkGraphSync(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			responseProgress, errors := gscli.Request(ctx, params[0].PeerId, params[0].Root, sel)
+			responseProgress, errors := gscli2.Request(ctx, params[0].PeerId, params[0].Root, sel)
 			go func() {
 				select {
 				case err := <-errors:
