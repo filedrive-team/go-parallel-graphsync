@@ -51,10 +51,10 @@ goarch: amd64
 pkg: github.com/filedrive-team/go-parallel-graphsync/example
 cpu: Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz
 BenchmarkGraphSync
-BenchmarkGraphSync/request_to_3_service
-BenchmarkGraphSync/request_to_3_service-12                    20         287788918 ns/op        934335776 B/op    169836 allocs/op
-BenchmarkGraphSync/request_to_1_service
-BenchmarkGraphSync/request_to_1_service-12                    20         568096739 ns/op        933052052 B/op    167728 allocs/op
+BenchmarkGraphSync/Parallel-Grapysync_request_to_3_service
+BenchmarkGraphSync/Parallel-Grapysync_request_to_3_service-12                 20         291028110 ns/op        934336510 B/op    169788 allocs/op
+BenchmarkGraphSync/Grapysync_request_to_1_service
+BenchmarkGraphSync/Grapysync_request_to_1_service-12                          20         579072270 ns/op        932883964 B/op    167104 allocs/op
 PASS
-ok      github.com/filedrive-team/go-parallel-graphsync/example 19.208s
+ok      github.com/filedrive-team/go-parallel-graphsync/example 19.798s
 ```

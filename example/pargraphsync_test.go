@@ -185,7 +185,7 @@ func BenchmarkGraphSync(b *testing.B) {
 	})
 	host2.Peerstore().AddAddr(addrInfos[0].ID, addrInfos[0].Addrs[0], peerstore.PermanentAddrTTL)
 
-	b.Run("request to 3 service", func(b *testing.B) {
+	b.Run("Parallel-Grapysync request to 3 service", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			b.StopTimer()
@@ -219,7 +219,7 @@ func BenchmarkGraphSync(b *testing.B) {
 			}
 		}
 	})
-	b.Run("request to 1 service", func(b *testing.B) {
+	b.Run("Grapysync request to 1 service", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			b.StopTimer()
