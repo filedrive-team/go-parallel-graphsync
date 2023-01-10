@@ -18,7 +18,7 @@ For example, we assume Node A needs to synchronize a 1GiB file and Node B, C, an
 
 The transmission speed from Node B, C, and D to A are all 1MB/s.
 
-![comparison diagram](https://github.com/filedrive-team/go-parallel-graphsync/raw/main/img.png)
+![comparison diagram](./doc/compare.png)
 
 The results could be:
 
@@ -41,3 +41,20 @@ With ParallelGraphSync, the number of data copies can increase the entire networ
 - Improve the utilization of network resources
 
 
+### Benchmark
+```shell
+go test -v -test.run '^Bench.*$' -test.bench 'BenchmarkGraphSync' ./example/ -benchtime=20x --benchmem
+
+requester peerId=12D3KooWQ4zg9BTGhaF3NfaR9S4vCQJ6WAZ6VvCyNJMQkJaDMrHe
+goos: darwin
+goarch: amd64
+pkg: github.com/filedrive-team/go-parallel-graphsync/example
+cpu: Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz
+BenchmarkGraphSync
+BenchmarkGraphSync/Parallel-Grapysync_request_to_3_service
+BenchmarkGraphSync/Parallel-Grapysync_request_to_3_service-12                 20         291028110 ns/op        934336510 B/op    169788 allocs/op
+BenchmarkGraphSync/Grapysync_request_to_1_service
+BenchmarkGraphSync/Grapysync_request_to_1_service-12                          20         579072270 ns/op        932883964 B/op    167104 allocs/op
+PASS
+ok      github.com/filedrive-team/go-parallel-graphsync/example 19.798s
+```
