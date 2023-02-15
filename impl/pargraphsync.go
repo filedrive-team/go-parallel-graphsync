@@ -5,6 +5,8 @@ import (
 	"errors"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
 	"github.com/filedrive-team/go-parallel-graphsync/groupreq"
+	"github.com/filedrive-team/go-parallel-graphsync/gsrespserver"
+	"github.com/filedrive-team/go-parallel-graphsync/requestmanger"
 	"github.com/ipfs/go-graphsync"
 	"github.com/ipfs/go-graphsync/allocator"
 	"github.com/ipfs/go-graphsync/listeners"
@@ -31,7 +33,6 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"sync"
 	"time"
 )
 
@@ -339,41 +340,16 @@ func (gs *ParallelGraphSync) Request(ctx context.Context, p peer.ID, root ipld.L
 	return gs.requestManager.NewRequest(ctx, p, root, selector, extensions...)
 }
 
-// RequestMany initiates some new GraphSync requests to the given peers of param group using the given selector spec.
-func (gs *ParallelGraphSync) RequestMany(ctx context.Context, reqParams []pargraphsync.RequestParam) (<-chan graphsync.ResponseProgress, <-chan error) {
+// RequestMany initiates some new GraphSync requests to the given peers using the given selector spec.
+func (gs *ParallelGraphSync) RequestMany(ctx context.Context, peers []peer.ID, root ipld.Link, selector ipld.Node, extensions ...graphsync.ExtensionData) (<-chan graphsync.ResponseProgress, <-chan error) {
 	greq := groupreq.NewGroupRequest(ctx)
 	if greq, loaded := gs.groupReqMgr.GetOrAdd(greq); !loaded {
 		ctx = greq.GetContext()
 	}
 
-	var wg sync.WaitGroup
-	returnedResponses := make(chan graphsync.ResponseProgress)
-	returnedErrors := make(chan error)
-	for _, param := range reqParams {
-		wg.Add(1)
-		go func(param pargraphsync.RequestParam) {
-			defer wg.Done()
-			resp, errs := gs.Request(ctx, param.PeerId, param.Root, param.Selector, param.Extensions...)
-			var wgResp sync.WaitGroup
-			wgResp.Add(1)
-			go func() {
-				defer wgResp.Done()
-				for e := range errs {
-					returnedErrors <- e
-				}
-			}()
-			for r := range resp {
-				returnedResponses <- r
-			}
-			wgResp.Wait()
-		}(param)
-	}
-	go func() {
-		wg.Wait()
-		close(returnedResponses)
-		close(returnedErrors)
-	}()
-	return returnedResponses, returnedErrors
+	pgManager := gsrespserver.NewPeersGroupManager(peers)
+	rqManager := requestmanger.NewParGraphSyncRequestManger(gs, pgManager, root, selector, extensions...)
+	return rqManager.Start(ctx)
 }
 
 // RegisterIncomingRequestHook adds a hook that runs when a request is received

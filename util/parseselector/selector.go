@@ -12,6 +12,8 @@ import (
 	"strings"
 )
 
+var NotSupportError = errors.New("not support")
+
 type ERParseContext struct {
 	origin              selector.ParseContext
 	pathSegments        []string
@@ -148,7 +150,7 @@ func GenerateSelectors(sel ipld.Node) (selectors []ParsedSelectors, err error) {
 	}
 	for _, ec := range er.explorePathContexts {
 		if ec.NotSupport() {
-			return nil, errors.New("not support")
+			return nil, NotSupportError
 		}
 		paths := ec.Get()
 		for _, ep := range paths {

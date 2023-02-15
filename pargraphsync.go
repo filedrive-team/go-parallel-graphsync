@@ -38,8 +38,8 @@ type RequestParam struct {
 type ParallelGraphExchange interface {
 	graphsync.GraphExchange
 
-	// RequestMany initiates some new GraphSync requests to the given peers of param group using the given selector spec.
-	RequestMany(ctx context.Context, reqParams []RequestParam) (<-chan graphsync.ResponseProgress, <-chan error)
+	// RequestMany initiates some new GraphSync requests to the given peers using the given selector spec.
+	RequestMany(ctx context.Context, peers []peer.ID, root ipld.Link, selector ipld.Node, extensions ...graphsync.ExtensionData) (<-chan graphsync.ResponseProgress, <-chan error)
 	// GetGroupRequestBySubRequestId gets GroupRequest information by subRequestID
 	GetGroupRequestBySubRequestId(subRequestID graphsync.RequestID) GroupRequest
 }

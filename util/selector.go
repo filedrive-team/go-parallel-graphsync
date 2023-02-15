@@ -127,3 +127,29 @@ func UnixFSPathSelectorNotRecursive(path string) builder.SelectorSpec {
 	}
 	return selectorSoFar
 }
+
+func IsAllSelector(sel ipld.Node) bool {
+	var selBuilder strings.Builder
+	var allBuilder strings.Builder
+	dagjson.Encode(sel, &selBuilder)
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	allSel := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
+	dagjson.Encode(allSel.Node(), &allBuilder)
+	if selBuilder.String() == allBuilder.String() {
+		return true
+	}
+	return false
+}
+
+func LeftSelector(path string) ipld.Node {
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	selSpec, _ := textselector.SelectorSpecFromPath(LeftLinks, false, ssb.ExploreRecursiveEdge())
+	fromPath, _ := textselector.SelectorSpecFromPath(textselector.Expression(path), false, ssb.ExploreRecursive(selector.RecursionLimitNone(), selSpec))
+	return fromPath.Node()
+}
+
+func SelectorToJson(sel ipld.Node) string {
+	var selBuilder strings.Builder
+	dagjson.Encode(sel, &selBuilder)
+	return selBuilder.String()
+}

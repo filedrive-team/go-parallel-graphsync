@@ -51,12 +51,15 @@ func startWithBigCar(ctx context.Context) {
 	// QmTTSVQrNxBvQDXevh3UvToezMw1XQ5hvTMCwpDc8SDnNT
 	// Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y
 	bigCarRootCid, _ = cid.Parse("QmSvtt6abwrp3MybYqHHA4BdFjjuLBABXjLEVQKpMUfUU8")
+	var peers []peer.ID
 	for _, addrInfo := range bigCarAddrInfos {
 		bigCarHost.Peerstore().AddAddr(addrInfo.ID, addrInfo.Addrs[0], peerstore.PermanentAddrTTL)
+		peers = append(peers, addrInfo.ID)
 	}
-	parallelGraphServerManger = gsrespserver.NewParallelGraphServerManger(bigCarAddrInfos, bigCarHost)
+	parallelGraphServerManger = gsrespserver.NewPeersGroupManager(peers)
 }
 
+// TODO: fix me
 // since child nodes are automatically collected and synchronized in M2, this test method is no longer applicable
 //func TestSimpleDivideSelector(t *testing.T) {
 //	var s = util.ParGSTask{

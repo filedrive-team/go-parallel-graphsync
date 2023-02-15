@@ -52,7 +52,7 @@ var bigCarRootCid cid.Cid
 var bigCarParExchange pargraphsync.ParallelGraphExchange
 var bigCarAddrInfos []peer.AddrInfo
 var bigCarHost host.Host
-var parallelGraphServerManger *gsrespserver.ParallelGraphServerManger
+var parallelGraphServerManger *gsrespserver.PeersGroupManager
 
 const ServicesNum = 3
 
@@ -97,7 +97,7 @@ func TestMain(m *testing.M) {
 		fmt.Printf("RegisterIncomingRequestQueuedHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
 	})
 	globalParExchange.RegisterNetworkErrorListener(func(p peer.ID, request graphsync.RequestData, err error) {
-		fmt.Printf("RegisterNetworkErrorListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
+		fmt.Printf("RegisterNetworkErrorListener peer=%s request requestId=%s error=%v\n", p.String(), request.ID().String(), err)
 	})
 	globalParExchange.RegisterOutgoingBlockHook(func(p peer.ID, request graphsync.RequestData, block graphsync.BlockData, hookActions graphsync.OutgoingBlockHookActions) {
 		fmt.Printf("RegisterOutgoingBlockHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
