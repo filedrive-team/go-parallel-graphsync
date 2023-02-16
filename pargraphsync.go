@@ -42,4 +42,6 @@ type ParallelGraphExchange interface {
 	RequestMany(ctx context.Context, peers []peer.ID, root ipld.Link, selector ipld.Node, extensions ...graphsync.ExtensionData) (<-chan graphsync.ResponseProgress, <-chan error)
 	// GetGroupRequestBySubRequestId gets GroupRequest information by subRequestID
 	GetGroupRequestBySubRequestId(subRequestID graphsync.RequestID) GroupRequest
+	// CancelSubRequest cancels an in progress sub request or response
+	CancelSubRequest(ctx context.Context, subRequestID graphsync.RequestID) error
 }

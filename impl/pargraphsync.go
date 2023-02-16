@@ -518,6 +518,15 @@ func (gs *ParallelGraphSync) Cancel(ctx context.Context, groupRequestID graphsyn
 	return err
 }
 
+// CancelSubRequest cancels an in progress sub request or response
+func (gs *ParallelGraphSync) CancelSubRequest(ctx context.Context, subRequestID graphsync.RequestID) error {
+	var reqNotFound graphsync.RequestNotFoundErr
+	if err := gs.requestManager.CancelRequest(ctx, subRequestID); !errors.As(err, &reqNotFound) {
+		return err
+	}
+	return gs.responseManager.CancelResponse(ctx, subRequestID)
+}
+
 // SendUpdate sends an update for an in progress request or response
 func (gs *ParallelGraphSync) SendUpdate(ctx context.Context, groupRequestID graphsync.RequestID, extensions ...graphsync.ExtensionData) error {
 	groupReq := gs.groupReqMgr.Get(groupRequestID)
