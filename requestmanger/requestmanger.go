@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
-	"github.com/filedrive-team/go-parallel-graphsync/gsrespserver"
+	"github.com/filedrive-team/go-parallel-graphsync/pgmanager"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/filedrive-team/go-parallel-graphsync/util/parseselector"
 	"github.com/ipfs/go-cid"
@@ -33,7 +33,7 @@ type ParallelRequestManger struct {
 	inProgressReq sync.Map // key: sha256(root+selector) value: requestId
 
 	exchange   pargraphsync.ParallelGraphExchange
-	pgManager  *gsrespserver.PeersGroupManager
+	pgManager  *pgmanager.PeerGroupManager
 	rootCid    ipld.Link
 	selector   ipld.Node
 	extensions []graphsync.ExtensionData
@@ -42,7 +42,7 @@ type ParallelRequestManger struct {
 	returnedErrors    chan error
 }
 
-func NewParGraphSyncRequestManger(exchange pargraphsync.ParallelGraphExchange, manager *gsrespserver.PeersGroupManager,
+func NewParGraphSyncRequestManger(exchange pargraphsync.ParallelGraphExchange, manager *pgmanager.PeerGroupManager,
 	root ipld.Link, selector ipld.Node, extensions ...graphsync.ExtensionData) *ParallelRequestManger {
 	if manager.GetPeerCount() == 0 {
 		panic("have no peer")

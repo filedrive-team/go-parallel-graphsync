@@ -3,7 +3,7 @@ package example
 import (
 	"context"
 	"fmt"
-	"github.com/filedrive-team/go-parallel-graphsync/gsrespserver"
+	"github.com/filedrive-team/go-parallel-graphsync/pgmanager"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/filedrive-team/go-parallel-graphsync/util/parseselector"
 	"github.com/ipfs/go-cid"
@@ -56,7 +56,7 @@ func startWithBigCar(ctx context.Context) {
 		bigCarHost.Peerstore().AddAddr(addrInfo.ID, addrInfo.Addrs[0], peerstore.PermanentAddrTTL)
 		peers = append(peers, addrInfo.ID)
 	}
-	parallelGraphServerManger = gsrespserver.NewPeersGroupManager(peers)
+	parallelGraphServerManger = pgmanager.NewPeerGroupManager(peers)
 }
 
 // TODO: fix me

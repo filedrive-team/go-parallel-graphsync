@@ -73,7 +73,7 @@ func TestParallelGraphSync(t *testing.T) {
 
 	// restore to a file
 	if false {
-		rdag := merkledag.NewDAGService(blockservice.New(globalBs, offline.Exchange(globalBs)))
+		rdag := merkledag.NewDAGService(blockservice.New(membs, offline.Exchange(membs)))
 		nd, err := rdag.Get(mainCtx, globalRoot)
 		if err != nil {
 			t.Fatal(err)

@@ -1,15 +1,14 @@
-package gsrespserver
+package pgmanager
 
 import (
 	"context"
-	"fmt"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"go.uber.org/atomic"
 	"sort"
 	"time"
 )
 
-type PeersGroupManager struct {
+type PeerGroupManager struct {
 	peers map[string]*PeerInfo
 }
 
@@ -34,8 +33,8 @@ func (p PeerInfos) Swap(i, j int) {
 	p[i], p[j] = p[j], p[i]
 }
 
-func NewPeersGroupManager(peers []peer.ID) *PeersGroupManager {
-	mgr := &PeersGroupManager{
+func NewPeerGroupManager(peers []peer.ID) *PeerGroupManager {
+	mgr := &PeerGroupManager{
 		peers: make(map[string]*PeerInfo),
 	}
 	for _, p := range peers {
@@ -48,49 +47,49 @@ func NewPeersGroupManager(peers []peer.ID) *PeersGroupManager {
 	return mgr
 }
 
-func (pm *PeersGroupManager) UpdateSpeed(peerId string, transformSpeed uint64) {
+func (pm *PeerGroupManager) UpdateSpeed(peerId string, transformSpeed uint64) {
 	pm.peers[peerId].transformSpeed = transformSpeed
 }
 
-func (pm *PeersGroupManager) UpdateDelay(peerId string, timeDelay int64) {
+func (pm *PeerGroupManager) UpdateDelay(peerId string, timeDelay int64) {
 	pm.peers[peerId].timeDelay = timeDelay
 }
 
-func (pm *PeersGroupManager) LockPeer(peerId peer.ID) bool {
+func (pm *PeerGroupManager) LockPeer(peerId peer.ID) bool {
 	if pi, ok := pm.peers[peerId.String()]; ok {
 		return pi.idle.CompareAndSwap(true, false)
 	}
 	return false
 }
 
-func (pm *PeersGroupManager) ReleasePeer(peerId peer.ID) {
+func (pm *PeerGroupManager) ReleasePeer(peerId peer.ID) {
 	if pi, ok := pm.peers[peerId.String()]; ok {
 		pi.idle.Store(true)
 	}
 }
 
-func (pm *PeersGroupManager) ReleasePeers(ids []peer.ID) {
+func (pm *PeerGroupManager) ReleasePeers(ids []peer.ID) {
 	for _, id := range ids {
 		pm.ReleasePeer(id)
 	}
 }
 
-func (pm *PeersGroupManager) GetPeerInfo(peerId string) *PeerInfo {
+func (pm *PeerGroupManager) GetPeerInfo(peerId string) *PeerInfo {
 	if info, ok := pm.peers[peerId]; ok {
 		return info
 	}
 	return nil
 }
 
-func (pm *PeersGroupManager) GetIdlePeers(top int) []peer.ID {
-	for _, p := range pm.peers {
-		fmt.Println("before peerid:", p.peer, " idle:", p.idle.Load())
-	}
-	defer func() {
-		for _, p := range pm.peers {
-			fmt.Println("after peerid:", p.peer, " idle:", p.idle.Load())
-		}
-	}()
+func (pm *PeerGroupManager) GetIdlePeers(top int) []peer.ID {
+	//for _, p := range pm.peers {
+	//	fmt.Println("before peerid:", p.peer, " idle:", p.idle.Load())
+	//}
+	//defer func() {
+	//	for _, p := range pm.peers {
+	//		fmt.Println("after peerid:", p.peer, " idle:", p.idle.Load())
+	//	}
+	//}()
 	resList := make([]peer.ID, 0, top)
 	list := make(PeerInfos, 0, len(pm.peers))
 	for _, p := range pm.peers {
@@ -108,7 +107,7 @@ func (pm *PeersGroupManager) GetIdlePeers(top int) []peer.ID {
 	return resList
 }
 
-func (pm *PeersGroupManager) WaitIdlePeers(ctx context.Context, top int) []peer.ID {
+func (pm *PeerGroupManager) WaitIdlePeers(ctx context.Context, top int) []peer.ID {
 	ticker := time.NewTicker(time.Millisecond * 50)
 	defer ticker.Stop()
 	for {
@@ -124,11 +123,11 @@ func (pm *PeersGroupManager) WaitIdlePeers(ctx context.Context, top int) []peer.
 	}
 }
 
-func (pm *PeersGroupManager) GetPeerCount() int {
+func (pm *PeerGroupManager) GetPeerCount() int {
 	return len(pm.peers)
 }
 
-func (pm *PeersGroupManager) IsAllIdle() bool {
+func (pm *PeerGroupManager) IsAllIdle() bool {
 	for _, p := range pm.peers {
 		if !p.idle.Load() {
 			return false

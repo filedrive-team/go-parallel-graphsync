@@ -1,4 +1,4 @@
-package gsrespserver
+package pgmanager
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	"testing"
 )
 
-var pgsm *PeersGroupManager
+var pgsm *PeerGroupManager
 
 func TestMain(m *testing.M) {
 	keyFile := path.Join(os.TempDir(), "gsrespserver-host-key9620")
@@ -73,7 +73,7 @@ func TestMain(m *testing.M) {
 			panic(err1)
 		}
 	}
-	pgsm = NewPeersGroupManager(peerIds)
+	pgsm = NewPeerGroupManager(peerIds)
 	os.Exit(m.Run())
 }
 
