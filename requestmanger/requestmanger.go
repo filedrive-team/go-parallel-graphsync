@@ -94,15 +94,8 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 	}
 
 	m.exchange.RegisterNetworkErrorListener(func(p peer.ID, request graphsync.RequestData, err error) {
-		fmt.Printf("NetworkErrorListener peer=%s request requestId=%s error=%v\n", p.String(), request.ID().String(), err)
-		// retry request
-		m.pushSubRequest(ctx, []subRequest{{
-			Root:       cidlink.Link{Cid: request.Root()},
-			Selector:   request.Selector(),
-			Extensions: m.extensions,
-		},
-		})
-		m.pgManager.ReleasePeer(p)
+		//fmt.Printf("NetworkErrorListener peer=%s request requestId=%s error=%v\n", p.String(), request.ID().String(), err)
+		m.exchange.CancelSubRequest(ctx, request.ID())
 	})
 
 	m.RegisterCollectSpeedInfo(ctx)
@@ -144,16 +137,11 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 		go func() {
 			for job := range jobCidQueue {
 				if job.recursive {
-					select {
-					case m.requestChan <- []subRequest{{
+					m.pushSubRequest(ctx, []subRequest{{
 						Root:       job.cid,
 						Selector:   util.LeftSelector(""),
 						Extensions: m.extensions,
-					}}:
-					case <-ctx.Done():
-						return
-					}
-
+					}})
 				}
 			}
 		}()
@@ -176,9 +164,12 @@ func (m *ParallelRequestManger) collectSubtreeRoots(ctx context.Context, sel par
 	go func() {
 		defer wg.Done()
 		for e := range errorChan {
+			success = false
+			if _, ok := e.(graphsync.RequestClientCancelledErr); ok {
+				return
+			}
 			// TODO: cancel this group request
 			m.returnedErrors <- fmt.Errorf("%v, try again later", e)
-			success = false
 		}
 	}()
 	for blk := range responseProgress {
@@ -219,10 +210,7 @@ func (m *ParallelRequestManger) handleRequest(ctx context.Context) {
 			// len(m.requestChan)
 			for i, p := range peers {
 				go func(index int, id peer.ID) {
-					defer func() {
-						fmt.Println("ReleasePeer: ", id.String())
-						m.pgManager.ReleasePeer(id)
-					}()
+					defer m.pgManager.ReleasePeer(id)
 					m.syncData(ctx, id, request[index])
 				}(i, p)
 			}
@@ -241,6 +229,9 @@ func (m *ParallelRequestManger) handleRequest(ctx context.Context) {
 }
 
 func (m *ParallelRequestManger) pushSubRequest(ctx context.Context, reqs []subRequest) {
+	for _, req := range reqs {
+		fmt.Println("push req root:", req.Root.String(), " selector:", util.SelectorToJson(req.Selector))
+	}
 	go func() {
 		select {
 		case m.requestChan <- reqs:
@@ -270,6 +261,16 @@ func (m *ParallelRequestManger) syncData(ctx context.Context, p peer.ID, request
 	go func() {
 		defer wg.Done()
 		for e := range errorsChan {
+			if _, ok := e.(graphsync.RequestClientCancelledErr); ok {
+				// retry request
+				m.pushSubRequest(ctx, []subRequest{{
+					Root:       request.Root,
+					Selector:   request.Selector,
+					Extensions: request.Extensions,
+				},
+				})
+				return
+			}
 			// TODO: cancel this group request or retry
 			m.returnedErrors <- e
 		}
