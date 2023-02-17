@@ -9,10 +9,8 @@ import (
 	"github.com/filedrive-team/go-parallel-graphsync/pgmanager"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/filedrive-team/go-parallel-graphsync/util/parseselector"
-	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-graphsync"
 	"github.com/ipld/go-ipld-prime"
-	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"math"
 	"strings"
@@ -29,8 +27,8 @@ type subRequest struct {
 
 type ParallelRequestManger struct {
 	requestChan chan []subRequest
-	// status: requesting, completed
-	inProgressReq sync.Map // key: sha256(root+selector) value: requestId
+	// save request, contains status: requesting, completed
+	inProgressReq sync.Map // key: sha256(root+selector)
 
 	exchange   pargraphsync.ParallelGraphExchange
 	pgManager  *pgmanager.PeerGroupManager
@@ -57,11 +55,6 @@ func NewParGraphSyncRequestManger(exchange pargraphsync.ParallelGraphExchange, m
 		returnedResponses: make(chan graphsync.ResponseProgress),
 		returnedErrors:    make(chan error),
 	}
-}
-
-type jobCid struct {
-	cid       ipld.Link
-	recursive bool
 }
 
 func (m *ParallelRequestManger) singleErrorResponse(err error) (chan graphsync.ResponseProgress, chan error) {
@@ -103,14 +96,11 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 		defer m.Close()
 
 		// collect subtree root cid
-		jobCidQueue := make(chan jobCid)
+		jobCidQueue := make(chan ipld.Link)
 		go func() {
 			defer close(jobCidQueue)
 			if isAllSel {
-				jobCidQueue <- jobCid{
-					cid:       m.rootCid,
-					recursive: true,
-				}
+				jobCidQueue <- m.rootCid
 				return
 			}
 			subtreeSels := make(chan parseselector.ParsedSelectors, len(selectors))
@@ -135,14 +125,12 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 		}()
 
 		go func() {
-			for job := range jobCidQueue {
-				if job.recursive {
-					m.pushSubRequest(ctx, []subRequest{{
-						Root:       job.cid,
-						Selector:   util.LeftSelector(""),
-						Extensions: m.extensions,
-					}})
-				}
+			for root := range jobCidQueue {
+				m.pushSubRequest(ctx, []subRequest{{
+					Root:       root,
+					Selector:   util.LeftSelector(""),
+					Extensions: m.extensions,
+				}})
 			}
 		}()
 
@@ -151,7 +139,7 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 	return m.returnedResponses, m.returnedErrors
 }
 
-func (m *ParallelRequestManger) collectSubtreeRoots(ctx context.Context, sel parseselector.ParsedSelectors, queue chan<- jobCid) bool {
+func (m *ParallelRequestManger) collectSubtreeRoots(ctx context.Context, sel parseselector.ParsedSelectors, jobQueue chan<- ipld.Link) bool {
 	peerIds := m.pgManager.WaitIdlePeers(ctx, 1)
 	if len(peerIds) == 0 {
 		return false
@@ -178,15 +166,13 @@ func (m *ParallelRequestManger) collectSubtreeRoots(ctx context.Context, sel par
 		if sel.Path == blk.Path.String() {
 			fmt.Printf("edge:%v path=%s \n", sel.Recursive, blk.Path.String())
 			if blk.LastBlock.Link != nil {
-				ci, _ := cid.Parse(blk.LastBlock.Link.String())
-				// check if blk have sub node,Need to check? Or is this correct to check?
-				re := sel.Recursive
+				// TODO: check if blk have sub node,Need to check? Or is this correct to check?
+				recursive := sel.Recursive
 				if nd, err := blk.Node.LookupByString("Links"); err != nil || nd.Length() == 0 {
-					re = false
+					recursive = false
 				}
-				queue <- jobCid{
-					cid:       cidlink.Link{Cid: ci},
-					recursive: re,
+				if recursive {
+					jobQueue <- blk.LastBlock.Link
 				}
 			}
 		}
@@ -219,6 +205,7 @@ func (m *ParallelRequestManger) handleRequest(ctx context.Context) {
 				m.pushSubRequest(ctx, remain)
 			}
 		case <-ctx.Done():
+			m.returnedErrors <- graphsync.RequestClientCancelledErr{}
 			return
 		case <-ticker.C:
 			if len(m.requestChan) == 0 && m.pgManager.IsAllIdle() {
@@ -301,7 +288,7 @@ func (m *ParallelRequestManger) syncData(ctx context.Context, p peer.ID, request
 						// TODO: cancel this group request
 						m.returnedErrors <- err
 					} else {
-						if _, loaded := m.inProgressReq.LoadOrStore(generateKey(request.Root, sel), 0); !loaded {
+						if _, loaded := m.inProgressReq.LoadOrStore(generateKey(request.Root, sel), struct{}{}); !loaded {
 							subPath := ""
 							// fill in the path field when there is only one ipld node
 							if links == 1 {
