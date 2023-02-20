@@ -454,6 +454,8 @@ func (gs *ParallelGraphSync) Pause(ctx context.Context, groupRequestID graphsync
 		// if request not found in RequestManager, then invoke responseManager.PauseResponse
 		err = gs.responseManager.PauseResponse(ctx, subReqId)
 		if errors.As(err, &reqNotFound) || err == nil {
+			// ignore RequestNotFoundErr
+			err = nil
 			return true
 		}
 		return false
@@ -483,6 +485,8 @@ func (gs *ParallelGraphSync) Unpause(ctx context.Context, groupRequestID graphsy
 		// if request not found in RequestManager, then invoke responseManager.UnpauseResponse
 		err = gs.responseManager.UnpauseResponse(ctx, subReqId, extensions...)
 		if errors.As(err, &reqNotFound) || err == nil {
+			// ignore RequestNotFoundErr
+			err = nil
 			return true
 		}
 		return false
@@ -511,6 +515,8 @@ func (gs *ParallelGraphSync) Cancel(ctx context.Context, groupRequestID graphsyn
 		// if request not found in RequestManager, then invoke responseManager.CancelResponse
 		err = gs.responseManager.CancelResponse(ctx, subReqId)
 		if errors.As(err, &reqNotFound) || err == nil {
+			// ignore RequestNotFoundErr
+			err = nil
 			return true
 		}
 		return false
@@ -548,6 +554,8 @@ func (gs *ParallelGraphSync) SendUpdate(ctx context.Context, groupRequestID grap
 		// if request not found in RequestManager, then invoke responseManager.UpdateResponse
 		err = gs.responseManager.UpdateResponse(ctx, subReqId, extensions...)
 		if errors.As(err, &reqNotFound) || err == nil {
+			// ignore RequestNotFoundErr
+			err = nil
 			return true
 		}
 		return false
