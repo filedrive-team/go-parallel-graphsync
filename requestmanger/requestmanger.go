@@ -4,12 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
-	"fmt"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
 	"github.com/filedrive-team/go-parallel-graphsync/pgmanager"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/filedrive-team/go-parallel-graphsync/util/parseselector"
 	"github.com/ipfs/go-graphsync"
+	logging "github.com/ipfs/go-log/v2"
 	"github.com/ipld/go-ipld-prime"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"math"
@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 )
+
+var log = logging.Logger("parrequestmanger")
 
 type subRequest struct {
 	Root       ipld.Link
@@ -90,7 +92,7 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 	}
 
 	m.exchange.RegisterNetworkErrorListener(func(p peer.ID, request graphsync.RequestData, err error) {
-		//fmt.Printf("NetworkErrorListener peer=%s request requestId=%s error=%v\n", p.String(), request.ID().String(), err)
+		log.Infof("NetworkErrorListener peer=%s request requestId=%s error=%v", p.String(), request.ID().String(), err)
 		m.exchange.CancelSubRequest(ctx, request.ID())
 	})
 	m.RegisterCollectSpeedInfo(ctx)
@@ -148,7 +150,7 @@ func (m *ParallelRequestManger) syncSubtreeRoot(ctx context.Context, p peer.ID, 
 		m.returnedResponses <- blk
 
 		if request.Path == blk.Path.String() {
-			fmt.Printf("edge:%v path=%s \n", request.Recursive, blk.Path.String())
+			log.Debugf("recursive:%v path=%s", request.Recursive, blk.Path.String())
 			if blk.LastBlock.Link != nil {
 				// TODO: check if blk have sub node,Need to check? Or is this correct to check?
 				recursive := request.Recursive
@@ -226,7 +228,7 @@ func (m *ParallelRequestManger) handleRequest(ctx context.Context) {
 
 func (m *ParallelRequestManger) pushSubRequest(ctx context.Context, reqs []subRequest) {
 	for _, req := range reqs {
-		fmt.Println("push req root:", req.Root.String(), " selector:", util.SelectorToJson(req.Selector))
+		log.Debugf("push request, root:%v selector: %v", req.Root.String(), util.SelectorToJson(req.Selector))
 	}
 	select {
 	case m.requestChan <- reqs:
@@ -251,9 +253,9 @@ func generateKey(root ipld.Link, sel ipld.Node) string {
 }
 
 func (m *ParallelRequestManger) syncData(ctx context.Context, p peer.ID, request subRequest, exitCh chan<- struct{}) {
-	fmt.Println("req selector: ", util.SelectorToJson(request.Selector))
+	log.Debugf("subrequest, selector: %s", util.SelectorToJson(request.Selector))
 	defer func() {
-		fmt.Println("finish req selector: ", util.SelectorToJson(request.Selector))
+		log.Debugf("finish subrequest, selector: %s", util.SelectorToJson(request.Selector))
 	}()
 	responseProgress, errorsChan := m.exchange.Request(ctx, p, request.Root, request.Selector, request.Extensions...)
 	var wg sync.WaitGroup
