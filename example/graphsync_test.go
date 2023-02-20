@@ -44,15 +44,15 @@ import (
 
 var globalHost host.Host
 var globalParExchange pargraphsync.ParallelGraphExchange
-var globalAddrInfos []peer.AddrInfo
+var globalPeerIds []peer.ID
 var globalRoot cid.Cid
 var globalBs blockstore.Blockstore
 
 var bigCarRootCid cid.Cid
 var bigCarParExchange pargraphsync.ParallelGraphExchange
-var bigCarAddrInfos []peer.AddrInfo
+var bigCarPeerIds []peer.ID
 var bigCarHost host.Host
-var parallelGraphServerManger *pgmanager.PeerGroupManager
+var peerGroupManager *pgmanager.PeerGroupManager
 
 const ServicesNum = 3
 
@@ -64,7 +64,10 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	globalAddrInfos = addrInfos
+	globalPeerIds = make([]peer.ID, 0, len(addrInfos))
+	for i := 0; i < len(addrInfos); i++ {
+		globalPeerIds = append(globalPeerIds, addrInfos[i].ID)
+	}
 
 	keyFile := path.Join(os.TempDir(), "gs-key")
 	ds := datastore.NewMapDatastore()
@@ -149,7 +152,7 @@ func TestGraphSync(t *testing.T) {
 	// create a selector to traverse the whole tree
 	allSelector := selectorparse.CommonSelector_ExploreAllRecursively
 
-	responseProgress, errors = globalParExchange.Request(context.TODO(), globalAddrInfos[0].ID, cidlink.Link{globalRoot}, allSelector)
+	responseProgress, errors = globalParExchange.Request(context.TODO(), globalPeerIds[0], cidlink.Link{globalRoot}, allSelector)
 	go func() {
 		select {
 		case err := <-errors:

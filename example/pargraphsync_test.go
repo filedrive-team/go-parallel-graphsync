@@ -29,7 +29,6 @@ import (
 	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-core/host"
-	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"math/rand"
 	"testing"
@@ -48,13 +47,9 @@ func TestParallelGraphSync(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	peerIds := make([]peer.ID, 0, len(globalAddrInfos))
-	for i := 0; i < len(globalAddrInfos); i++ {
-		peerIds = append(peerIds, globalAddrInfos[i].ID)
-	}
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
 	all := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
-	responseProgress, errors := globalParExchange.RequestMany(mainCtx, peerIds, cidlink.Link{globalRoot}, all.Node())
+	responseProgress, errors := globalParExchange.RequestMany(mainCtx, globalPeerIds, cidlink.Link{globalRoot}, all.Node())
 	go func() {
 		select {
 		case err := <-errors:

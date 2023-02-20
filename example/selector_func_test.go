@@ -3,7 +3,6 @@ package example
 import (
 	"context"
 	"fmt"
-	"github.com/filedrive-team/go-parallel-graphsync/pgmanager"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/filedrive-team/go-parallel-graphsync/util/parseselector"
 	"github.com/ipfs/go-cid"
@@ -34,7 +33,10 @@ func startWithBigCar(ctx context.Context) {
 	if err != nil {
 		panic(err)
 	}
-	bigCarAddrInfos = addrInfos
+	bigCarPeerIds = make([]peer.ID, 0, len(addrInfos))
+	for i := 0; i < len(addrInfos); i++ {
+		bigCarPeerIds = append(bigCarPeerIds, addrInfos[i].ID)
+	}
 
 	keyFile := path.Join(os.TempDir(), "gs-key-big")
 	ds := datastore.NewMapDatastore()
@@ -51,12 +53,9 @@ func startWithBigCar(ctx context.Context) {
 	// QmTTSVQrNxBvQDXevh3UvToezMw1XQ5hvTMCwpDc8SDnNT
 	// Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y
 	bigCarRootCid, _ = cid.Parse("QmSvtt6abwrp3MybYqHHA4BdFjjuLBABXjLEVQKpMUfUU8")
-	var peers []peer.ID
-	for _, addrInfo := range bigCarAddrInfos {
+	for _, addrInfo := range addrInfos {
 		bigCarHost.Peerstore().AddAddr(addrInfo.ID, addrInfo.Addrs[0], peerstore.PermanentAddrTTL)
-		peers = append(peers, addrInfo.ID)
 	}
-	parallelGraphServerManger = pgmanager.NewPeerGroupManager(peers)
 }
 
 // TODO: fix me
@@ -289,7 +288,7 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 			}
 			var cids []string
 			for i, ne := range parsed {
-				responseProgress, errors := bigCarParExchange.Request(context.TODO(), bigCarAddrInfos[i%3].ID, cidlink.Link{Cid: bigCarRootCid}, ne.Sel)
+				responseProgress, errors := bigCarParExchange.Request(context.TODO(), bigCarPeerIds[i%3], cidlink.Link{Cid: bigCarRootCid}, ne.Sel)
 				go func() {
 					select {
 					case err := <-errors:

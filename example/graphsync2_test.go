@@ -62,7 +62,7 @@ func TestGraphSync2(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := 0; i < ServicesNum; i++ {
-		_, errors = globalParExchange.Request(context.TODO(), globalAddrInfos[i].ID, cidlink.Link{globalRoot}, sels[i])
+		_, errors = globalParExchange.Request(context.TODO(), globalPeerIds[i], cidlink.Link{globalRoot}, sels[i])
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -169,7 +169,7 @@ func TestSimpleUnionSelector(t *testing.T) {
 					return
 				}
 			}
-			result := comparePaths(t, bigCarParExchange, res, testCase.paths, bigCarAddrInfos[0].ID, cidlink.Link{Cid: bigCarRootCid})
+			result := comparePaths(t, bigCarParExchange, res, testCase.paths, bigCarPeerIds[0], cidlink.Link{Cid: bigCarRootCid})
 			if result != testCase.expect {
 				t.Errorf("not equal,\n%v\n", s.String())
 			}

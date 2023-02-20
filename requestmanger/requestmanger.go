@@ -23,6 +23,9 @@ type subRequest struct {
 	Selector   ipld.Node
 	Path       string
 	Extensions []graphsync.ExtensionData
+
+	ResolveSubtreeRoot bool
+	Recursive          bool
 }
 
 type ParallelRequestManger struct {
@@ -82,7 +85,7 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 			if len(peerId) == 0 {
 				return m.singleErrorResponse(errors.New("no idle peer"))
 			}
-			return m.exchange.Request(ctx, peerId[0], m.rootCid, m.selector)
+			return m.exchange.Request(ctx, peerId[0], m.rootCid, m.selector, m.extensions...)
 		}
 	}
 
@@ -90,114 +93,116 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 		//fmt.Printf("NetworkErrorListener peer=%s request requestId=%s error=%v\n", p.String(), request.ID().String(), err)
 		m.exchange.CancelSubRequest(ctx, request.ID())
 	})
-
 	m.RegisterCollectSpeedInfo(ctx)
+
 	go func() {
-		defer m.Close()
+		defer func() {
+			m.Close()
+		}()
 
 		// collect subtree root cid
-		jobCidQueue := make(chan ipld.Link)
-		go func() {
-			defer close(jobCidQueue)
-			if isAllSel {
-				jobCidQueue <- m.rootCid
-				return
-			}
-			subtreeSels := make(chan parseselector.ParsedSelectors, len(selectors))
-			defer close(subtreeSels)
+		if isAllSel {
+			m.pushSubRequest(ctx, []subRequest{{
+				Root:       m.rootCid,
+				Selector:   util.LeftSelector(""),
+				Extensions: m.extensions,
+			}})
+		} else {
+			subtreeRootReqs := make([]subRequest, 0, len(selectors))
 			for _, sel := range selectors {
-				subtreeSels <- sel
+				subtreeRootReqs = append(subtreeRootReqs, subRequest{
+					Root:               m.rootCid,
+					Selector:           sel.Sel,
+					Path:               sel.Path,
+					Recursive:          sel.Recursive,
+					ResolveSubtreeRoot: true,
+				})
 			}
-
-			for {
-				select {
-				case sel := <-subtreeSels:
-					if !m.collectSubtreeRoots(ctx, sel, jobCidQueue) {
-						subtreeSels <- sel
-					}
-					if len(subtreeSels) == 0 {
-						return
-					}
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
-
-		go func() {
-			for root := range jobCidQueue {
-				m.pushSubRequest(ctx, []subRequest{{
-					Root:       root,
-					Selector:   util.LeftSelector(""),
-					Extensions: m.extensions,
-				}})
-			}
-		}()
+			m.pushSubRequest(ctx, subtreeRootReqs)
+		}
 
 		m.handleRequest(ctx)
 	}()
 	return m.returnedResponses, m.returnedErrors
 }
 
-func (m *ParallelRequestManger) collectSubtreeRoots(ctx context.Context, sel parseselector.ParsedSelectors, jobQueue chan<- ipld.Link) bool {
-	peerIds := m.pgManager.WaitIdlePeers(ctx, 1)
-	if len(peerIds) == 0 {
-		return false
-	}
-	defer m.pgManager.ReleasePeer(peerIds[0])
-	success := true
-	responseProgress, errorChan := m.exchange.Request(ctx, peerIds[0], m.rootCid, sel.Sel)
+func (m *ParallelRequestManger) syncSubtreeRoot(ctx context.Context, p peer.ID, request subRequest, exitCh chan<- struct{}) {
+	responseProgress, errorChan := m.exchange.Request(ctx, p, request.Root, request.Selector, request.Extensions...)
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		for e := range errorChan {
-			success = false
 			if _, ok := e.(graphsync.RequestClientCancelledErr); ok {
+				// retry request
+				m.pushSubRequest(ctx, []subRequest{request})
 				return
 			}
-			// TODO: cancel this group request
-			m.returnedErrors <- fmt.Errorf("%v, try again later", e)
+			m.returnedErrors <- e
+			// cancel this group request
+			exitCh <- struct{}{}
+			return
 		}
 	}()
 	for blk := range responseProgress {
 		m.returnedResponses <- blk
 
-		if sel.Path == blk.Path.String() {
-			fmt.Printf("edge:%v path=%s \n", sel.Recursive, blk.Path.String())
+		if request.Path == blk.Path.String() {
+			fmt.Printf("edge:%v path=%s \n", request.Recursive, blk.Path.String())
 			if blk.LastBlock.Link != nil {
 				// TODO: check if blk have sub node,Need to check? Or is this correct to check?
-				recursive := sel.Recursive
+				recursive := request.Recursive
 				if nd, err := blk.Node.LookupByString("Links"); err != nil || nd.Length() == 0 {
 					recursive = false
 				}
 				if recursive {
-					jobQueue <- blk.LastBlock.Link
+					m.pushSubRequest(ctx, []subRequest{{
+						Root:       blk.LastBlock.Link,
+						Selector:   util.LeftSelector(""),
+						Extensions: m.extensions,
+					}})
 				}
 			}
 		}
 	}
 	wg.Wait()
-	return success
 }
 
 func (m *ParallelRequestManger) handleRequest(ctx context.Context) {
 	ticker := time.NewTicker(time.Millisecond * 50)
 	defer ticker.Stop()
+	var wg sync.WaitGroup
+	exitCh := make(chan struct{})
+	defer func() {
+		go func() {
+			// remove unnecessary exit signals
+			for _ = range exitCh {
+			}
+		}()
+		wg.Wait()
+		close(exitCh)
+	}()
 	for {
 		select {
 		case request := <-m.requestChan:
 			// get the idle peers
 			peers := m.pgManager.WaitIdlePeers(ctx, len(request))
 			if len(peers) == 0 {
+				// exit
 				return
 			}
 			// TODO: merge multiple existing requests based on the number of idle peers
 			// len(m.requestChan)
 			for i, p := range peers {
+				wg.Add(1)
 				go func(index int, id peer.ID) {
+					defer wg.Done()
 					defer m.pgManager.ReleasePeer(id)
-					m.syncData(ctx, id, request[index])
+					if request[index].ResolveSubtreeRoot {
+						m.syncSubtreeRoot(ctx, id, request[index], exitCh)
+					} else {
+						m.syncData(ctx, id, request[index], exitCh)
+					}
 				}(i, p)
 			}
 			remain := request[len(peers):]
@@ -208,9 +213,13 @@ func (m *ParallelRequestManger) handleRequest(ctx context.Context) {
 			m.returnedErrors <- graphsync.RequestClientCancelledErr{}
 			return
 		case <-ticker.C:
-			if len(m.requestChan) == 0 && m.pgManager.IsAllIdle() {
+			// check twice
+			if len(m.requestChan) == 0 && m.pgManager.IsAllIdle() && len(m.requestChan) == 0 {
 				return
 			}
+		case <-exitCh:
+			// handle early exit signals due to errors
+			return
 		}
 	}
 }
@@ -219,13 +228,17 @@ func (m *ParallelRequestManger) pushSubRequest(ctx context.Context, reqs []subRe
 	for _, req := range reqs {
 		fmt.Println("push req root:", req.Root.String(), " selector:", util.SelectorToJson(req.Selector))
 	}
-	go func() {
-		select {
-		case m.requestChan <- reqs:
-		case <-ctx.Done():
-			return
-		}
-	}()
+	select {
+	case m.requestChan <- reqs:
+	default:
+		go func() {
+			select {
+			case m.requestChan <- reqs:
+			case <-ctx.Done():
+				return
+			}
+		}()
+	}
 }
 
 func generateKey(root ipld.Link, sel ipld.Node) string {
@@ -237,7 +250,7 @@ func generateKey(root ipld.Link, sel ipld.Node) string {
 	return string(h.Sum(nil))
 }
 
-func (m *ParallelRequestManger) syncData(ctx context.Context, p peer.ID, request subRequest) {
+func (m *ParallelRequestManger) syncData(ctx context.Context, p peer.ID, request subRequest, exitCh chan<- struct{}) {
 	fmt.Println("req selector: ", util.SelectorToJson(request.Selector))
 	defer func() {
 		fmt.Println("finish req selector: ", util.SelectorToJson(request.Selector))
@@ -250,68 +263,63 @@ func (m *ParallelRequestManger) syncData(ctx context.Context, p peer.ID, request
 		for e := range errorsChan {
 			if _, ok := e.(graphsync.RequestClientCancelledErr); ok {
 				// retry request
-				m.pushSubRequest(ctx, []subRequest{{
-					Root:       request.Root,
-					Selector:   request.Selector,
-					Extensions: request.Extensions,
-				},
-				})
+				m.pushSubRequest(ctx, []subRequest{request})
 				return
 			}
-			// TODO: cancel this group request or retry
 			m.returnedErrors <- e
+			// cancel this group request
+			exitCh <- struct{}{}
+			return
 		}
 	}()
 
 	for blk := range responseProgress {
 		m.returnedResponses <- blk
 
-		if nd, err := blk.Node.LookupByString("Links"); err == nil && nd.Length() != 0 {
-			if nd.Length() > 1 {
-				path := blk.Path.String()
-				links := nd.Length() - 1
-				peers := int64(m.pgManager.GetPeerCount())
-				requests := make([]subRequest, 0, peers)
-				usedLinks := int64(0)
-				for index := int64(0); index < peers; index++ {
-					remainLinks := links - usedLinks
-					remainPeers := peers - index
-					avg := remainLinks / remainPeers
-					if remainLinks%remainPeers != 0 {
-						avg += 1
-					}
+		if nd, err := blk.Node.LookupByString("Links"); err == nil && nd.Length() > 1 {
+			path := blk.Path.String()
+			links := nd.Length() - 1
+			peers := int64(m.pgManager.GetPeerCount())
+			requests := make([]subRequest, 0, peers)
+			usedLinks := int64(0)
+			for index := int64(0); index < peers; index++ {
+				remainLinks := links - usedLinks
+				remainPeers := peers - index
+				avg := remainLinks / remainPeers
+				if remainLinks%remainPeers != 0 {
+					avg += 1
+				}
 
-					start := 1 + usedLinks
-					end := start + avg
-					usedLinks += avg
-					if sel, err := util.GenerateSubRangeSelector(path, start, end); err != nil {
-						// TODO: cancel this group request
-						m.returnedErrors <- err
-					} else {
-						if _, loaded := m.inProgressReq.LoadOrStore(generateKey(request.Root, sel), struct{}{}); !loaded {
-							subPath := ""
-							// fill in the path field when there is only one ipld node
-							if links == 1 {
-								if path == "" {
-									subPath = "Links"
-								} else {
-									subPath = path + "/Links"
-								}
-								subPath = subPath + "/1/Hash/Links"
-
+				start := 1 + usedLinks
+				end := start + avg
+				usedLinks += avg
+				if sel, err := util.GenerateSubRangeSelector(path, start, end); err != nil {
+					// TODO: cancel this group request
+					m.returnedErrors <- err
+				} else {
+					if _, loaded := m.inProgressReq.LoadOrStore(generateKey(request.Root, sel), struct{}{}); !loaded {
+						subPath := ""
+						// fill in the path field when there is only one ipld node
+						if links == 1 {
+							if path == "" {
+								subPath = "Links"
+							} else {
+								subPath = path + "/Links"
 							}
-							requests = append(requests, subRequest{
-								Root:       request.Root,
-								Selector:   sel,
-								Path:       subPath,
-								Extensions: request.Extensions,
-							})
+							subPath = subPath + "/1/Hash/Links"
+
 						}
+						requests = append(requests, subRequest{
+							Root:       request.Root,
+							Selector:   sel,
+							Path:       subPath,
+							Extensions: request.Extensions,
+						})
 					}
 				}
-				if len(requests) > 0 {
-					m.pushSubRequest(ctx, requests)
-				}
+			}
+			if len(requests) > 0 {
+				m.pushSubRequest(ctx, requests)
 			}
 		}
 	}
