@@ -17,7 +17,7 @@ import (
 	"testing"
 )
 
-func TestSimpleParGraphSyncRequestManger(t *testing.T) {
+func TestSimpleParGraphSyncRequest(t *testing.T) {
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
 	all := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
 	sel, _ := textselector.SelectorSpecFromPath("Links/2/Hash", false, all)
@@ -50,9 +50,7 @@ func TestSimpleParGraphSyncRequestManger(t *testing.T) {
 				defer wg.Done()
 				select {
 				case err := <-errors:
-					if err != nil {
-						require.Equal(t, tc.err, err)
-					}
+					require.Equal(t, tc.err, err)
 				}
 			}()
 
@@ -92,7 +90,10 @@ func TestParGraphSyncRequestMangerSubtree(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		responseProgress, errors := bigCarParExchange.RequestMany(context.TODO(), bigCarPeerIds, cidlink.Link{Cid: bigCarRootCid}, tc.sel)
+		var wg sync.WaitGroup
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			select {
 			case err := <-errors:
 				require.Equal(t, tc.expect, err)
@@ -105,6 +106,7 @@ func TestParGraphSyncRequestMangerSubtree(t *testing.T) {
 				fmt.Printf("links=%d\n", nd.Length())
 			}
 		}
+		wg.Wait()
 	}
 
 }

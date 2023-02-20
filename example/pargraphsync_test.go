@@ -11,6 +11,7 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
 	dssync "github.com/ipfs/go-datastore/sync"
+	"github.com/ipfs/go-graphsync"
 	gsnet "github.com/ipfs/go-graphsync/network"
 	"github.com/ipfs/go-graphsync/storeutil"
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
@@ -29,8 +30,12 @@ import (
 	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-core/host"
+	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/libp2p/go-libp2p-core/peerstore"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"math/rand"
+	"os"
+	"path"
 	"testing"
 	"time"
 )
@@ -84,151 +89,129 @@ func TestParallelGraphSync(t *testing.T) {
 	}
 }
 
-// TODO: fix me
-//func BenchmarkGraphSync(b *testing.B) {
-//	mainCtx, cancel := context.WithCancel(context.TODO())
-//	defer cancel()
-//	const ServicesNum = 3
-//	servbs, rootCid := CreateRandomBytesBlockStore(mainCtx, 290*1024*1024)
-//	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9110, servbs, false)
-//	if err != nil {
-//		b.Fatal(err)
-//	}
-//	keyFile := path.Join(os.TempDir(), "gscli-key")
-//	ds := datastore.NewMapDatastore()
-//	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
-//
-//	host, gscli, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9120", keyFile, bs)
-//	if err != nil {
-//		b.Fatal(err)
-//	}
-//
-//	gscli.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
-//		//	fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-//		hookActions.UsePersistenceOption("newLinkSys")
-//	})
-//
-//	sel1, err := util.GenerateSubRangeSelector("", 0, 100)
-//	if err != nil {
-//		b.Fatal(err)
-//	}
-//	sel2, err := util.GenerateSubRangeSelector("", 100, 200)
-//	if err != nil {
-//		b.Fatal(err)
-//	}
-//	sel3, err := util.GenerateSubRangeSelector("", 200, 300)
-//	if err != nil {
-//		b.Fatal(err)
-//	}
-//	sels := []datamodel.Node{
-//		sel1,
-//		sel2,
-//		sel3,
-//	}
-//	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
-//	for i := 0; i < ServicesNum; i++ {
-//		host.Peerstore().AddAddr(addrInfos[i].ID, addrInfos[i].Addrs[0], peerstore.PermanentAddrTTL)
-//
-//		params = append(params, pargraphsync.RequestParam{
-//			PeerId:   addrInfos[i].ID,
-//			Root:     cidlink.Link{rootCid},
-//			Selector: sels[i],
-//		})
-//	}
-//
-//	// graphsync init
-//	keyFile2 := path.Join(os.TempDir(), "gscli-key2")
-//	host2, gscli2, err := startGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9121", keyFile2, bs)
-//	if err != nil {
-//		b.Fatal(err)
-//	}
-//	gscli2.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
-//		//	fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
-//		hookActions.UsePersistenceOption("newLinkSys")
-//	})
-//	host2.Peerstore().AddAddr(addrInfos[0].ID, addrInfos[0].Addrs[0], peerstore.PermanentAddrTTL)
-//
-//	b.Run("Parallel-Grapysync request to 3 service", func(b *testing.B) {
-//		b.ResetTimer()
-//		for i := 0; i < b.N; i++ {
-//			b.StopTimer()
-//			gscli.UnregisterPersistenceOption("newLinkSys")
-//			memds := datastore.NewMapDatastore()
-//			membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
-//			newlsys := storeutil.LinkSystemForBlockstore(membs)
-//			if err := gscli.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
-//				b.Fatal(err)
-//			}
-//			b.StartTimer()
-//
-//			ctx := context.Background()
-//			responseProgress, errors := gscli.RequestMany(ctx, params)
-//			go func() {
-//				select {
-//				case err := <-errors:
-//					if err != nil {
-//						b.Fatal(err)
-//					}
-//				}
-//			}()
-//			for range responseProgress {
-//			}
-//			has, err := membs.Has(mainCtx, rootCid)
-//			if err != nil {
-//				b.Fatal(err)
-//			}
-//			if !has {
-//				b.Fatal("not pass")
-//			}
-//		}
-//	})
-//	b.Run("Grapysync request to 1 service", func(b *testing.B) {
-//		b.ResetTimer()
-//		for i := 0; i < b.N; i++ {
-//			b.StopTimer()
-//			gscli2.UnregisterPersistenceOption("newLinkSys")
-//			memds := datastore.NewMapDatastore()
-//			membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
-//			newlsys := storeutil.LinkSystemForBlockstore(membs)
-//			if err := gscli2.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
-//				b.Fatal(err)
-//			}
-//			b.StartTimer()
-//
-//			ctx := context.Background()
-//			sel, err := util.GenerateSubRangeSelector("", 0, 300)
-//			if err != nil {
-//				b.Fatal(err)
-//			}
-//			responseProgress, errors := gscli2.Request(ctx, params[0].PeerId, params[0].Root, sel)
-//			go func() {
-//				select {
-//				case err := <-errors:
-//					if err != nil {
-//						b.Fatal(err)
-//					}
-//				}
-//			}()
-//			for range responseProgress {
-//			}
-//			has, err := membs.Has(mainCtx, rootCid)
-//			if err != nil {
-//				b.Fatal(err)
-//			}
-//			if !has {
-//				b.Fatal("not pass")
-//			}
-//		}
-//	})
-//	has, err := bs.Has(mainCtx, rootCid)
-//	if err != nil {
-//		b.Fatal(err)
-//	}
-//	if has {
-//		b.Fatal("not pass")
-//	}
-//
-//}
+func BenchmarkGraphSync(b *testing.B) {
+	mainCtx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
+	const ServicesNum = 3
+	servbs, rootCid := CreateRandomBytesBlockStore(mainCtx, 290*1024*1024)
+	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9110, servbs, false)
+	if err != nil {
+		b.Fatal(err)
+	}
+	keyFile := path.Join(os.TempDir(), "gscli-key")
+	ds := datastore.NewMapDatastore()
+	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
+
+	host, gscli, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9120", keyFile, bs)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	gscli.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
+		//	fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
+		hookActions.UsePersistenceOption("newLinkSys")
+	})
+
+	peerIds := make([]peer.ID, 0, ServicesNum)
+	for i := 0; i < ServicesNum; i++ {
+		host.Peerstore().AddAddr(addrInfos[i].ID, addrInfos[i].Addrs[0], peerstore.PermanentAddrTTL)
+
+		peerIds = append(peerIds, addrInfos[i].ID)
+	}
+
+	// graphsync init
+	keyFile2 := path.Join(os.TempDir(), "gscli-key2")
+	host2, gscli2, err := startGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9121", keyFile2, bs)
+	if err != nil {
+		b.Fatal(err)
+	}
+	gscli2.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
+		//	fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
+		hookActions.UsePersistenceOption("newLinkSys")
+	})
+	host2.Peerstore().AddAddr(addrInfos[0].ID, addrInfos[0].Addrs[0], peerstore.PermanentAddrTTL)
+
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	all := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
+
+	b.Run("Parallel-Graphsync request to 3 service", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			b.StopTimer()
+			gscli.UnregisterPersistenceOption("newLinkSys")
+			memds := datastore.NewMapDatastore()
+			membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
+			newlsys := storeutil.LinkSystemForBlockstore(membs)
+			if err := gscli.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+				b.Fatal(err)
+			}
+			b.StartTimer()
+
+			ctx := context.Background()
+			responseProgress, errors := gscli.RequestMany(ctx, peerIds, cidlink.Link{rootCid}, all.Node())
+			go func() {
+				select {
+				case err := <-errors:
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+			}()
+			for range responseProgress {
+			}
+			has, err := membs.Has(mainCtx, rootCid)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if !has {
+				b.Fatal("not pass")
+			}
+		}
+	})
+	b.Run("Graphsync request to 1 service", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			b.StopTimer()
+			gscli2.UnregisterPersistenceOption("newLinkSys")
+			memds := datastore.NewMapDatastore()
+			membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
+			newlsys := storeutil.LinkSystemForBlockstore(membs)
+			if err := gscli2.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+				b.Fatal(err)
+			}
+			b.StartTimer()
+
+			ctx := context.Background()
+			responseProgress, errors := gscli2.Request(ctx, peerIds[0], cidlink.Link{rootCid}, all.Node())
+			go func() {
+				select {
+				case err := <-errors:
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+			}()
+			for range responseProgress {
+			}
+			has, err := membs.Has(mainCtx, rootCid)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if !has {
+				b.Fatal("not pass")
+			}
+		}
+	})
+	has, err := bs.Has(mainCtx, rootCid)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if has {
+		b.Fatal("not pass")
+	}
+
+}
+
 //
 //func TestParallelGraphSyncExploreRecursiveLeftNode(t *testing.T) {
 //	mainCtx, cancel := context.WithCancel(context.TODO())
