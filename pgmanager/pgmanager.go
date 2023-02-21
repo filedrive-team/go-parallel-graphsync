@@ -5,11 +5,11 @@ import (
 	"github.com/libp2p/go-libp2p-core/peer"
 	"go.uber.org/atomic"
 	"sort"
-	"time"
 )
 
 type PeerGroupManager struct {
-	peers map[string]*PeerInfo
+	peers      map[string]*PeerInfo
+	idleNotify chan struct{}
 }
 
 type PeerInfo struct {
@@ -35,7 +35,8 @@ func (p PeerInfos) Swap(i, j int) {
 
 func NewPeerGroupManager(peers []peer.ID) *PeerGroupManager {
 	mgr := &PeerGroupManager{
-		peers: make(map[string]*PeerInfo),
+		peers:      make(map[string]*PeerInfo),
+		idleNotify: make(chan struct{}, len(peers)),
 	}
 	for _, p := range peers {
 		pi := &PeerInfo{
@@ -43,6 +44,7 @@ func NewPeerGroupManager(peers []peer.ID) *PeerGroupManager {
 		}
 		pi.idle.Store(true)
 		mgr.peers[p.String()] = pi
+		mgr.idleNotify <- struct{}{}
 	}
 	return mgr
 }
@@ -65,6 +67,7 @@ func (pm *PeerGroupManager) LockPeer(peerId peer.ID) bool {
 func (pm *PeerGroupManager) ReleasePeer(peerId peer.ID) {
 	if pi, ok := pm.peers[peerId.String()]; ok {
 		pi.idle.Store(true)
+		pm.idleNotify <- struct{}{}
 	}
 }
 
@@ -81,7 +84,7 @@ func (pm *PeerGroupManager) GetPeerInfo(peerId string) *PeerInfo {
 	return nil
 }
 
-func (pm *PeerGroupManager) GetIdlePeers(top int) []peer.ID {
+func (pm *PeerGroupManager) getIdlePeers(top int) []peer.ID {
 	//for _, p := range pm.peers {
 	//	fmt.Println("before peerid:", p.peer, " idle:", p.idle.Load())
 	//}
@@ -108,17 +111,21 @@ func (pm *PeerGroupManager) GetIdlePeers(top int) []peer.ID {
 }
 
 func (pm *PeerGroupManager) WaitIdlePeers(ctx context.Context, top int) []peer.ID {
-	ticker := time.NewTicker(time.Millisecond * 50)
-	defer ticker.Stop()
+	if top <= 0 {
+		return nil
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-ticker.C:
-			ids := pm.GetIdlePeers(top)
-			if len(ids) > 0 {
-				return ids
+		case <-pm.idleNotify:
+			ids := pm.getIdlePeers(top)
+			// removes a message that has been used up
+			remove := len(ids) - 1
+			for i := 0; i < remove; i++ {
+				<-pm.idleNotify
 			}
+			return ids
 		}
 	}
 }
@@ -134,4 +141,8 @@ func (pm *PeerGroupManager) IsAllIdle() bool {
 		}
 	}
 	return true
+}
+
+func (pm *PeerGroupManager) Close() {
+	close(pm.idleNotify)
 }

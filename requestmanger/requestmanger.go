@@ -46,9 +46,9 @@ type ParallelRequestManger struct {
 	returnedErrors    chan error
 }
 
-func NewParGraphSyncRequestManger(exchange pargraphsync.ParallelGraphExchange, parent context.Context, manager *pgmanager.PeerGroupManager,
+func NewParGraphSyncRequestManger(exchange pargraphsync.ParallelGraphExchange, parent context.Context, peers []peer.ID,
 	root ipld.Link, selector ipld.Node, extensions ...graphsync.ExtensionData) *ParallelRequestManger {
-	if manager.GetPeerCount() == 0 {
+	if len(peers) == 0 {
 		panic("have no peer")
 	}
 	return &ParallelRequestManger{
@@ -58,7 +58,7 @@ func NewParGraphSyncRequestManger(exchange pargraphsync.ParallelGraphExchange, p
 		rootCid:           root,
 		selector:          selector,
 		extensions:        extensions,
-		pgManager:         manager,
+		pgManager:         pgmanager.NewPeerGroupManager(peers),
 		returnedResponses: make(chan graphsync.ResponseProgress),
 		returnedErrors:    make(chan error),
 	}
@@ -85,7 +85,7 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 		if util.IsAllSelector(m.selector) {
 			isAllSel = true
 		} else {
-			peerId := m.pgManager.GetIdlePeers(1)
+			peerId := m.pgManager.WaitIdlePeers(ctx, 1)
 			if len(peerId) == 0 {
 				return m.singleErrorResponse(errors.New("no idle peer"))
 			}
@@ -101,7 +101,7 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 
 	go func() {
 		defer func() {
-			m.Close()
+			m.close()
 		}()
 
 		// collect subtree root cid
@@ -271,7 +271,7 @@ func (m *ParallelRequestManger) syncSubtreeRoot(ctx context.Context, p peer.ID, 
 }
 
 func (m *ParallelRequestManger) handleRequest(ctx context.Context) {
-	ticker := time.NewTicker(time.Millisecond * 20)
+	ticker := time.NewTicker(time.Millisecond * 25)
 	defer ticker.Stop()
 	var wg sync.WaitGroup
 	exitCh := make(chan struct{})
@@ -434,11 +434,12 @@ func (m *ParallelRequestManger) syncData(ctx context.Context, p peer.ID, request
 	}
 }
 
-// Close the Manger
-func (m *ParallelRequestManger) Close() {
+// close the Manger
+func (m *ParallelRequestManger) close() {
 	close(m.returnedErrors)
 	close(m.returnedResponses)
 	close(m.requestChan)
+	m.pgManager.Close()
 }
 
 func (m *ParallelRequestManger) dividePaths(ctx context.Context, paths []string) []subRequest {

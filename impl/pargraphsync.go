@@ -5,7 +5,6 @@ import (
 	"errors"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
 	"github.com/filedrive-team/go-parallel-graphsync/groupreq"
-	"github.com/filedrive-team/go-parallel-graphsync/pgmanager"
 	"github.com/filedrive-team/go-parallel-graphsync/requestmanger"
 	"github.com/ipfs/go-graphsync"
 	"github.com/ipfs/go-graphsync/allocator"
@@ -347,8 +346,7 @@ func (gs *ParallelGraphSync) RequestMany(ctx context.Context, peers []peer.ID, r
 		ctx = greq.GetContext()
 	}
 
-	pgManager := pgmanager.NewPeerGroupManager(peers)
-	rqManager := requestmanger.NewParGraphSyncRequestManger(gs, gs.ctx, pgManager, root, selector, extensions...)
+	rqManager := requestmanger.NewParGraphSyncRequestManger(gs, gs.ctx, peers, root, selector, extensions...)
 	return rqManager.Start(ctx)
 }
 
