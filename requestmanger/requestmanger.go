@@ -36,6 +36,7 @@ type ParallelRequestManger struct {
 	inProgressReq sync.Map // key: sha256(root+selector)
 
 	exchange   pargraphsync.ParallelGraphExchange
+	parentCtx  context.Context
 	pgManager  *pgmanager.PeerGroupManager
 	rootCid    ipld.Link
 	selector   ipld.Node
@@ -45,7 +46,7 @@ type ParallelRequestManger struct {
 	returnedErrors    chan error
 }
 
-func NewParGraphSyncRequestManger(exchange pargraphsync.ParallelGraphExchange, manager *pgmanager.PeerGroupManager,
+func NewParGraphSyncRequestManger(exchange pargraphsync.ParallelGraphExchange, parent context.Context, manager *pgmanager.PeerGroupManager,
 	root ipld.Link, selector ipld.Node, extensions ...graphsync.ExtensionData) *ParallelRequestManger {
 	if manager.GetPeerCount() == 0 {
 		panic("have no peer")
@@ -53,6 +54,7 @@ func NewParGraphSyncRequestManger(exchange pargraphsync.ParallelGraphExchange, m
 	return &ParallelRequestManger{
 		requestChan:       make(chan []subRequest, 1024),
 		exchange:          exchange,
+		parentCtx:         parent,
 		rootCid:           root,
 		selector:          selector,
 		extensions:        extensions,
@@ -125,7 +127,105 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 
 		m.handleRequest(ctx)
 	}()
-	return m.returnedResponses, m.returnedErrors
+	return m.collectResponses(ctx, m.returnedResponses, m.returnedErrors, func() {
+		// cancel request
+	})
+}
+
+func (m *ParallelRequestManger) collectResponses(
+	requestCtx context.Context,
+	incomingResponses <-chan graphsync.ResponseProgress,
+	incomingErrors <-chan error,
+	cancelRequest func(),
+) (<-chan graphsync.ResponseProgress, <-chan error) {
+
+	returnedResponses := make(chan graphsync.ResponseProgress)
+	returnedErrors := make(chan error)
+
+	go func() {
+		var receivedResponses []graphsync.ResponseProgress
+		defer close(returnedResponses)
+		outgoingResponses := func() chan<- graphsync.ResponseProgress {
+			if len(receivedResponses) == 0 {
+				return nil
+			}
+			return returnedResponses
+		}
+		nextResponse := func() graphsync.ResponseProgress {
+			if len(receivedResponses) == 0 {
+				return graphsync.ResponseProgress{}
+			}
+			return receivedResponses[0]
+		}
+		for len(receivedResponses) > 0 || incomingResponses != nil {
+			select {
+			case <-m.parentCtx.Done():
+				return
+			case <-requestCtx.Done():
+				if incomingResponses != nil {
+					cancelRequest()
+				}
+				return
+			case response, ok := <-incomingResponses:
+				if !ok {
+					incomingResponses = nil
+				} else {
+					receivedResponses = append(receivedResponses, response)
+				}
+			case outgoingResponses() <- nextResponse():
+				receivedResponses = receivedResponses[1:]
+			}
+		}
+	}()
+	go func() {
+		var receivedErrors []error
+		defer close(returnedErrors)
+
+		outgoingErrors := func() chan<- error {
+			if len(receivedErrors) == 0 {
+				return nil
+			}
+			return returnedErrors
+		}
+		nextError := func() error {
+			if len(receivedErrors) == 0 {
+				return nil
+			}
+			return receivedErrors[0]
+		}
+
+		for len(receivedErrors) > 0 || incomingErrors != nil {
+			select {
+			case <-m.parentCtx.Done():
+				return
+			case <-requestCtx.Done():
+				select {
+				case <-m.parentCtx.Done():
+				case returnedErrors <- graphsync.RequestClientCancelledErr{}:
+				}
+				return
+			case err, ok := <-incomingErrors:
+				if !ok {
+					incomingErrors = nil
+					// even if the `incomingErrors` channel is closed without any error,
+					// the context could still have timed out in which case we need to inform the caller of the same.
+					select {
+					case <-requestCtx.Done():
+						select {
+						case <-m.parentCtx.Done():
+						case returnedErrors <- graphsync.RequestClientCancelledErr{}:
+						}
+					default:
+					}
+				} else {
+					receivedErrors = append(receivedErrors, err)
+				}
+			case outgoingErrors() <- nextError():
+				receivedErrors = receivedErrors[1:]
+			}
+		}
+	}()
+	return returnedResponses, returnedErrors
 }
 
 func (m *ParallelRequestManger) syncSubtreeRoot(ctx context.Context, p peer.ID, request subRequest, exitCh chan<- struct{}) {
@@ -171,7 +271,7 @@ func (m *ParallelRequestManger) syncSubtreeRoot(ctx context.Context, p peer.ID, 
 }
 
 func (m *ParallelRequestManger) handleRequest(ctx context.Context) {
-	ticker := time.NewTicker(time.Millisecond * 50)
+	ticker := time.NewTicker(time.Millisecond * 20)
 	defer ticker.Stop()
 	var wg sync.WaitGroup
 	exitCh := make(chan struct{})
@@ -184,6 +284,8 @@ func (m *ParallelRequestManger) handleRequest(ctx context.Context) {
 		wg.Wait()
 		close(exitCh)
 	}()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	for {
 		select {
 		case request := <-m.requestChan:
@@ -211,16 +313,18 @@ func (m *ParallelRequestManger) handleRequest(ctx context.Context) {
 			if len(remain) > 0 {
 				m.pushSubRequest(ctx, remain)
 			}
+		case <-m.parentCtx.Done():
+			return
 		case <-ctx.Done():
-			m.returnedErrors <- graphsync.RequestClientCancelledErr{}
 			return
 		case <-ticker.C:
 			// check twice
 			if len(m.requestChan) == 0 && m.pgManager.IsAllIdle() && len(m.requestChan) == 0 {
+				// sync finished
 				return
 			}
 		case <-exitCh:
-			// handle early exit signals due to errors
+			// handle exit signals
 			return
 		}
 	}

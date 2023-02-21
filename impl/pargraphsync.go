@@ -348,7 +348,7 @@ func (gs *ParallelGraphSync) RequestMany(ctx context.Context, peers []peer.ID, r
 	}
 
 	pgManager := pgmanager.NewPeerGroupManager(peers)
-	rqManager := requestmanger.NewParGraphSyncRequestManger(gs, pgManager, root, selector, extensions...)
+	rqManager := requestmanger.NewParGraphSyncRequestManger(gs, gs.ctx, pgManager, root, selector, extensions...)
 	return rqManager.Start(ctx)
 }
 
