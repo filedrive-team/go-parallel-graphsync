@@ -26,14 +26,6 @@ type SubRequest struct {
 	Ctx       context.Context
 }
 
-// RequestParam describes param about the request
-type RequestParam struct {
-	PeerId     peer.ID
-	Root       ipld.Link
-	Selector   ipld.Node
-	Extensions []graphsync.ExtensionData
-}
-
 // ParallelGraphExchange is a protocol that can exchange IPLD graphs based on a selector
 type ParallelGraphExchange interface {
 	graphsync.GraphExchange

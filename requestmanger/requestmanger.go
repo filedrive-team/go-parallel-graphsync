@@ -232,6 +232,7 @@ func (m *ParallelRequestManger) syncSubtreeRoot(ctx context.Context, p peer.ID, 
 	responseProgress, errorChan := m.exchange.Request(ctx, p, request.Root, request.Selector, request.Extensions...)
 	var wg sync.WaitGroup
 	wg.Add(1)
+	defer wg.Wait()
 	go func() {
 		defer wg.Done()
 		for e := range errorChan {
@@ -267,7 +268,6 @@ func (m *ParallelRequestManger) syncSubtreeRoot(ctx context.Context, p peer.ID, 
 			}
 		}
 	}
-	wg.Wait()
 }
 
 func (m *ParallelRequestManger) handleRequest(ctx context.Context) {
@@ -364,6 +364,7 @@ func (m *ParallelRequestManger) syncData(ctx context.Context, p peer.ID, request
 	responseProgress, errorsChan := m.exchange.Request(ctx, p, request.Root, request.Selector, request.Extensions...)
 	var wg sync.WaitGroup
 	wg.Add(1)
+	defer wg.Wait()
 	go func() {
 		defer wg.Done()
 		for e := range errorsChan {
@@ -400,8 +401,10 @@ func (m *ParallelRequestManger) syncData(ctx context.Context, p peer.ID, request
 				end := start + avg
 				usedLinks += avg
 				if sel, err := util.GenerateSubRangeSelector(path, start, end); err != nil {
-					// TODO: cancel this group request
 					m.returnedErrors <- err
+					// cancel this group request
+					exitCh <- struct{}{}
+					return
 				} else {
 					if _, loaded := m.inProgressReq.LoadOrStore(generateKey(request.Root, sel), struct{}{}); !loaded {
 						subPath := ""
@@ -429,7 +432,6 @@ func (m *ParallelRequestManger) syncData(ctx context.Context, p peer.ID, request
 			}
 		}
 	}
-	wg.Wait()
 }
 
 // Close the Manger
