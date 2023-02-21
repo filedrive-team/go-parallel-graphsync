@@ -37,6 +37,7 @@ import (
 	"math/rand"
 	"os"
 	"path"
+	"sync"
 	"testing"
 	"time"
 )
@@ -56,7 +57,10 @@ func TestParallelGraphSync(t *testing.T) {
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
 	all := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
 	responseProgress, errors := globalParExchange.RequestMany(mainCtx, globalPeerIds, cidlink.Link{globalRoot}, all.Node())
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		select {
 		case err := <-errors:
 			if err != nil {
@@ -71,6 +75,7 @@ func TestParallelGraphSync(t *testing.T) {
 			fmt.Printf("links=%d\n", nd.Length())
 		}
 	}
+	wg.Wait()
 
 	// restore to a file
 	if false {
@@ -275,7 +280,73 @@ func TestParallelGraphSyncControl(t *testing.T) {
 	}
 }
 
-func startPraGraphSyncClient(ctx context.Context, listenAddr string, keyFile string, bs blockstore.Blockstore) (host.Host, pargraphsync.ParallelGraphExchange, error) {
+func TestParallelGraphSyncCancel(t *testing.T) {
+	mainCtx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
+	const ServicesNum = 3
+	servbs, rootCid := CreateRandomBytesBlockStore(mainCtx, 300*1024*1024)
+	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9310, servbs, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyFile := path.Join(os.TempDir(), "gs-prakey")
+	ds := datastore.NewMapDatastore()
+	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
+
+	host, gs, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9320", keyFile, bs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gs.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
+		groupReq := gs.GetGroupRequestBySubRequestId(responseData.RequestID())
+		require.NotNil(t, groupReq)
+		t.Logf("groupRequestID=%s subRequestID=%s", groupReq.GetGroupRequestID(), responseData.RequestID())
+		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
+	})
+
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	all := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
+
+	peerIds := make([]peer.ID, 0, ServicesNum)
+	for i := 0; i < len(addrInfos); i++ {
+		host.Peerstore().AddAddr(addrInfos[i].ID, addrInfos[i].Addrs[0], peerstore.PermanentAddrTTL)
+
+		peerIds = append(peerIds, addrInfos[i].ID)
+	}
+
+	groupRequestID := graphsync.NewRequestID()
+	cliCtx := context.WithValue(context.TODO(), pargraphsync.GroupRequestIDContextKey{}, groupRequestID)
+	responseProgress, errors := gs.RequestMany(cliCtx, peerIds, cidlink.Link{rootCid}, all.Node())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for err := range errors {
+			// Occasionally, a load Link error is encountered
+			t.Logf("rootCid=%s error=%v", rootCid, err)
+		}
+	}()
+	time.Sleep(100 * time.Millisecond)
+	err = gs.Cancel(cliCtx, groupRequestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for blk := range responseProgress {
+		fmt.Printf("path=%s \n", blk.Path.String())
+		if nd, err := blk.Node.LookupByString("Links"); err == nil {
+			fmt.Printf("links=%d\n", nd.Length())
+		}
+	}
+	wg.Wait()
+}
+
+func startPraGraphSyncClient(
+	ctx context.Context,
+	listenAddr string,
+	keyFile string,
+	bs blockstore.Blockstore,
+) (host.Host, pargraphsync.ParallelGraphExchange, error) {
 	peerkey, err := util.LoadOrInitPeerKey(keyFile)
 	if err != nil {
 		return nil, nil, err
