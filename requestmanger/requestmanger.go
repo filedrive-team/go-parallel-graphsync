@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
 	"github.com/filedrive-team/go-parallel-graphsync/pgmanager"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
@@ -118,6 +119,7 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 					Root:               m.rootCid,
 					Selector:           sel.Sel,
 					Path:               sel.Path,
+					Extensions:         m.extensions,
 					Recursive:          sel.Recursive,
 					ResolveSubtreeRoot: true,
 				})
@@ -391,6 +393,9 @@ func (m *ParallelRequestManger) syncData(ctx context.Context, p peer.ID, request
 			usedLinks := int64(0)
 			for index := int64(0); index < peers; index++ {
 				remainLinks := links - usedLinks
+				if remainLinks <= 0 {
+					break
+				}
 				remainPeers := peers - index
 				avg := remainLinks / remainPeers
 				if remainLinks%remainPeers != 0 {
@@ -400,7 +405,8 @@ func (m *ParallelRequestManger) syncData(ctx context.Context, p peer.ID, request
 				start := 1 + usedLinks
 				end := start + avg
 				usedLinks += avg
-				if sel, err := util.GenerateSubRangeSelector(path, start, end); err != nil {
+
+				if sel, err := util.GenerateLeftSubRangeSelector(path, start, end); err != nil {
 					m.returnedErrors <- err
 					// cancel this group request
 					exitCh <- struct{}{}
@@ -409,14 +415,13 @@ func (m *ParallelRequestManger) syncData(ctx context.Context, p peer.ID, request
 					if _, loaded := m.inProgressReq.LoadOrStore(generateKey(request.Root, sel), struct{}{}); !loaded {
 						subPath := ""
 						// fill in the path field when there is only one ipld node
-						if links == 1 {
+						if end-start == 1 {
 							if path == "" {
 								subPath = "Links"
 							} else {
 								subPath = path + "/Links"
 							}
-							subPath = subPath + "/1/Hash/Links"
-
+							subPath = fmt.Sprintf("%s/%d/Hash/Links", subPath, start)
 						}
 						requests = append(requests, subRequest{
 							Root:       request.Root,

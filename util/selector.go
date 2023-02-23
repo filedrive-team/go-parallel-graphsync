@@ -35,19 +35,43 @@ func GenerateDataSelectorSpec(dpsPath string, matchPath bool, optionalSubSel bui
 	return selspec, nil
 }
 
-func GenerateSubRangeSelectorSpec(selPath string, start, end int64) (builder.SelectorSpec, error) {
+func GenerateSubRangeSelectorSpec(selPath string, start, end int64, optionalSubSel builder.SelectorSpec) (builder.SelectorSpec, error) {
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	subselAtTarget := ssb.ExploreRecursive(
+		selector.RecursionLimitNone(),
+		ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())),
+	)
+	if optionalSubSel != nil {
+		subselAtTarget = optionalSubSel
+	}
 	subsel := ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
-		specBuilder.Insert("Links", ssb.ExploreRange(start, end,
-			ssb.ExploreRecursive(selector.RecursionLimitNone(),
-				ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
-		))
+		specBuilder.Insert("Links", ssb.ExploreRange(start, end, subselAtTarget))
 	})
 	return GenerateDataSelectorSpec(selPath, false, subsel)
 }
 
-func GenerateSubRangeSelector(selPath string, start, end int64) (datamodel.Node, error) {
-	selSpec, err := GenerateSubRangeSelectorSpec(selPath, start, end)
+func GenerateSubRangeSelector(selPath string, start, end int64, optionalSubSel builder.SelectorSpec) (datamodel.Node, error) {
+	selSpec, err := GenerateSubRangeSelectorSpec(selPath, start, end, optionalSubSel)
+	if err != nil {
+		return nil, err
+	}
+	return selSpec.Node(), nil
+}
+
+func GenerateLeftSubRangeSelector(selPath string, start, end int64) (datamodel.Node, error) {
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	subsel := ssb.ExploreRecursive(selector.RecursionLimitNone(),
+		ssb.ExploreUnion(
+			ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+				specBuilder.Insert("Links", ssb.ExploreIndex(0,
+					ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
+				)
+			}),
+			ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+				specBuilder.Insert("Hash", ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())))
+			}),
+		))
+	selSpec, err := GenerateSubRangeSelectorSpec(selPath, start, end, subsel)
 	if err != nil {
 		return nil, err
 	}
