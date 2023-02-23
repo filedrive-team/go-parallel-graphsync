@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
-	"github.com/filedrive-team/go-parallel-graphsync/pgmanager"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/ipfs/go-blockservice"
 	"github.com/ipfs/go-cid"
@@ -52,7 +51,6 @@ var bigCarRootCid cid.Cid
 var bigCarParExchange pargraphsync.ParallelGraphExchange
 var bigCarPeerIds []peer.ID
 var bigCarHost host.Host
-var peerGroupManager *pgmanager.PeerGroupManager
 
 const ServicesNum = 3
 
