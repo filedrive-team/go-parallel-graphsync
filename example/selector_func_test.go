@@ -89,7 +89,7 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 		specBuilder.Insert("Links", ssb.ExploreRange(1, 4,
 			ssb.ExploreIndex(0, ssb.Matcher())))
 	}).Node()
-	selRange2, _ := util.GenerateSubRangeSelector("Links/0/Hash", 1, 4, nil)
+	selRange2, _ := util.GenerateSubRangeSelector("Links/0/Hash", false, 1, 4, nil)
 	testCases := []struct {
 		name     string
 		selRes   ipld.Node

@@ -107,11 +107,16 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 
 		// collect subtree root cid
 		if isAllSel {
-			m.pushSubRequest(ctx, []subRequest{{
-				Root:       m.rootCid,
-				Selector:   util.LeftSelector(""),
-				Extensions: m.extensions,
-			}})
+			if sel, err := util.RootLeftSelector(""); err != nil {
+				m.returnedErrors <- err
+				return
+			} else {
+				m.pushSubRequest(ctx, []subRequest{{
+					Root:       m.rootCid,
+					Selector:   sel,
+					Extensions: m.extensions,
+				}})
+			}
 		} else {
 			subtreeRootReqs := make([]subRequest, 0, len(selectors))
 			for _, sel := range selectors {
@@ -231,6 +236,9 @@ func (m *ParallelRequestManger) collectResponses(
 }
 
 func (m *ParallelRequestManger) syncSubtreeRoot(ctx context.Context, p peer.ID, request subRequest, exitCh chan<- struct{}) {
+	defer func() {
+		log.Debugf("finish subrequest, selector: %s", util.SelectorToJson(request.Selector))
+	}()
 	responseProgress, errorChan := m.exchange.Request(ctx, p, request.Root, request.Selector, request.Extensions...)
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -261,11 +269,18 @@ func (m *ParallelRequestManger) syncSubtreeRoot(ctx context.Context, p peer.ID, 
 					recursive = false
 				}
 				if recursive {
-					m.pushSubRequest(ctx, []subRequest{{
-						Root:       blk.LastBlock.Link,
-						Selector:   util.LeftSelector(""),
-						Extensions: m.extensions,
-					}})
+					if sel, err := util.RootLeftSelector(""); err != nil {
+						m.returnedErrors <- err
+						// cancel this group request
+						exitCh <- struct{}{}
+						return
+					} else {
+						m.pushSubRequest(ctx, []subRequest{{
+							Root:       blk.LastBlock.Link,
+							Selector:   sel,
+							Extensions: m.extensions,
+						}})
+					}
 				}
 			}
 		}
@@ -333,9 +348,9 @@ func (m *ParallelRequestManger) handleRequest(ctx context.Context) {
 }
 
 func (m *ParallelRequestManger) pushSubRequest(ctx context.Context, reqs []subRequest) {
-	for _, req := range reqs {
-		log.Debugf("push request, root:%v selector: %v", req.Root.String(), util.SelectorToJson(req.Selector))
-	}
+	//for _, req := range reqs {
+	//	log.Debugf("push request, root:%v selector: %v", req.Root.String(), util.SelectorToJson(req.Selector))
+	//}
 	select {
 	case m.requestChan <- reqs:
 	default:
@@ -387,7 +402,7 @@ func (m *ParallelRequestManger) syncData(ctx context.Context, p peer.ID, request
 
 		if nd, err := blk.Node.LookupByString("Links"); err == nil && nd.Length() > 1 {
 			path := blk.Path.String()
-			links := nd.Length() - 1
+			links := nd.Length()
 			peers := int64(m.pgManager.GetPeerCount())
 			requests := make([]subRequest, 0, peers)
 			usedLinks := int64(0)
@@ -402,7 +417,7 @@ func (m *ParallelRequestManger) syncData(ctx context.Context, p peer.ID, request
 					avg += 1
 				}
 
-				start := 1 + usedLinks
+				start := usedLinks
 				end := start + avg
 				usedLinks += avg
 
