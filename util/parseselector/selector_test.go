@@ -42,7 +42,7 @@ func TestParseSelector(t *testing.T) {
 	selU1, _ := textselector.SelectorSpecFromPath("/0/Hash/Links", false, ssb.ExploreUnion(selU0, fromPath1))
 	selU2, _ := textselector.SelectorSpecFromPath("Links", false, ssb.ExploreUnion(selU1, fromPath4))
 
-	selRange, _ := util.GenerateSubRangeSelectorSpec("", 1, 3)
+	selRange, _ := util.GenerateSubRangeSelectorSpec("", false, 1, 3, nil)
 	path3, _ := util.GenerateDataSelectorSpec("Links/3/Hash", true, nil)
 	selUnionRange := ssb.ExploreUnion(selRange, path3)
 
