@@ -14,15 +14,15 @@ import (
 	gsnet "github.com/ipfs/go-graphsync/network"
 	"github.com/ipfs/go-graphsync/storeutil"
 	blockstore "github.com/ipfs/go-ipfs-blockstore"
-	files "github.com/ipfs/go-ipfs-files"
+	"github.com/ipfs/go-libipfs/files"
 	"github.com/ipfs/go-merkledag"
 	carv2bs "github.com/ipld/go-car/v2/blockstore"
 	"github.com/ipld/go-ipld-prime/codec/dagjson"
 	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p-core/crypto"
-	"github.com/libp2p/go-libp2p-core/host"
-	"github.com/libp2p/go-libp2p-core/peer"
-	"github.com/libp2p/go-libp2p-core/peerstore"
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/multiformats/go-multiaddr"
 	mh "github.com/multiformats/go-multihash"
@@ -88,8 +88,8 @@ func TestMain(m *testing.M) {
 	globalParExchange.RegisterCompletedResponseListener(func(p peer.ID, request graphsync.RequestData, status graphsync.ResponseStatusCode) {
 		fmt.Printf("RegisterCompletedResponseListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
 	})
-	globalParExchange.RegisterIncomingRequestQueuedHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.RequestQueuedHookActions) {
-		fmt.Printf("RegisterIncomingRequestQueuedHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
+	globalParExchange.RegisterIncomingRequestProcessingListener(func(p peer.ID, request graphsync.RequestData, inProgressRequestCount int) {
+		fmt.Printf("RegisterIncomingRequestProcessingListener peer=%s request requestId=%s inProgressRequestCount=%d\n", p.String(), request.ID().String(), inProgressRequestCount)
 	})
 	globalParExchange.RegisterNetworkErrorListener(func(p peer.ID, request graphsync.RequestData, err error) {
 		fmt.Printf("RegisterNetworkErrorListener peer=%s request requestId=%s error=%v\n", p.String(), request.ID().String(), err)
@@ -230,8 +230,8 @@ func startGraphSyncService(ctx context.Context, listenAddr string, peerkey crypt
 		exchange.RegisterCompletedResponseListener(func(p peer.ID, request graphsync.RequestData, status graphsync.ResponseStatusCode) {
 			fmt.Printf("RegisterCompletedResponseListener peer=%s request requestId=%s\n", p.String(), request.ID().String())
 		})
-		exchange.RegisterIncomingRequestQueuedHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.RequestQueuedHookActions) {
-			fmt.Printf("RegisterIncomingRequestQueuedHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
+		exchange.RegisterIncomingRequestProcessingListener(func(p peer.ID, request graphsync.RequestData, inProgressRequestCount int) {
+			fmt.Printf("RegisterIncomingRequestProcessingListener peer=%s request requestId=%s inProgressRequestCount=%d\n", p.String(), request.ID().String(), inProgressRequestCount)
 		})
 		exchange.RegisterNetworkErrorListener(func(p peer.ID, request graphsync.RequestData, err error) {
 			fmt.Printf("RegisterNetworkErrorListener peer=%s request requestId=%s\n", p.String(), request.ID().String())

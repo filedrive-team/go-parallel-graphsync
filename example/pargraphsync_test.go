@@ -32,9 +32,9 @@ import (
 	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
 	textselector "github.com/ipld/go-ipld-selector-text-lite"
 	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p-core/host"
-	"github.com/libp2p/go-libp2p-core/peer"
-	"github.com/libp2p/go-libp2p-core/peerstore"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/stretchr/testify/require"
 	"math/rand"
@@ -711,7 +711,10 @@ func TestParallelGraphSyncControl(t *testing.T) {
 	groupRequestID := graphsync.NewRequestID()
 	cliCtx := context.WithValue(context.TODO(), pargraphsync.GroupRequestIDContextKey{}, groupRequestID)
 	responseProgress, errors := gs.RequestMany(cliCtx, peerIds, cidlink.Link{rootCid}, all.Node())
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for err := range errors {
 			// Occasionally, a load Link error is encountered
 			t.Logf("rootCid=%s error=%v", rootCid, err)
@@ -733,6 +736,7 @@ func TestParallelGraphSyncControl(t *testing.T) {
 			fmt.Printf("links=%d\n", nd.Length())
 		}
 	}
+	wg.Wait()
 }
 
 func TestParallelGraphSyncCancel(t *testing.T) {

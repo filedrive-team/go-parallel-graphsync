@@ -4,7 +4,7 @@ import (
 	"context"
 	"github.com/ipfs/go-graphsync"
 	"github.com/ipld/go-ipld-prime"
-	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 // GroupRequestIDContextKey is used to the desired request id in context when

@@ -12,7 +12,7 @@ import (
 	"github.com/ipfs/go-graphsync"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/ipld/go-ipld-prime"
-	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"math"
 	"strings"
 	"sync"
