@@ -87,7 +87,7 @@ func (er *ERParseContext) collectPath(erc ExplorePathContext) {
 			} else if strings.HasSuffix(paths[0].Path, "Hash") {
 				er.explorePathContexts = append(er.explorePathContexts, erc)
 			} else {
-				fmt.Println(erc.Get())
+				//fmt.Println(erc.Get())
 			}
 		}
 	}

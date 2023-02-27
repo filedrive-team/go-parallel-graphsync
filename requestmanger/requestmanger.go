@@ -348,9 +348,9 @@ func (m *ParallelRequestManger) handleRequest(ctx context.Context) {
 }
 
 func (m *ParallelRequestManger) pushSubRequest(ctx context.Context, reqs []subRequest) {
-	//for _, req := range reqs {
-	//	log.Debugf("push request, root:%v selector: %v", req.Root.String(), util.SelectorToJson(req.Selector))
-	//}
+	for _, req := range reqs {
+		log.Debugf("push request, root:%v selector: %v", req.Root.String(), util.SelectorToJson(req.Selector))
+	}
 	select {
 	case m.requestChan <- reqs:
 	default:
