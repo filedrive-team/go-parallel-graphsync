@@ -50,7 +50,7 @@ type ParallelRequestManger struct {
 func NewParGraphSyncRequestManger(exchange pargraphsync.ParallelGraphExchange, parent context.Context, peers []peer.ID,
 	root ipld.Link, selector ipld.Node, extensions ...graphsync.ExtensionData) *ParallelRequestManger {
 	if len(peers) == 0 {
-		panic("have no peer")
+		log.Fatal("have no peer")
 	}
 	return &ParallelRequestManger{
 		requestChan:       make(chan []subRequest, 1024),
@@ -235,7 +235,8 @@ func (m *ParallelRequestManger) collectResponses(
 	return returnedResponses, returnedErrors
 }
 
-func (m *ParallelRequestManger) syncSubtreeRoot(ctx context.Context, p peer.ID, request subRequest, exitCh chan<- struct{}) {
+func (m *ParallelRequestManger) syncSubtree(ctx context.Context, p peer.ID, request subRequest, exitCh chan<- struct{}) {
+	log.Debugf("subrequest, selector: %s", util.SelectorToJson(request.Selector))
 	defer func() {
 		log.Debugf("finish subrequest, selector: %s", util.SelectorToJson(request.Selector))
 	}()
@@ -260,27 +261,81 @@ func (m *ParallelRequestManger) syncSubtreeRoot(ctx context.Context, p peer.ID, 
 	for blk := range responseProgress {
 		m.returnedResponses <- blk
 
-		if request.Path == blk.Path.String() {
-			log.Debugf("recursive:%v path=%s", request.Recursive, blk.Path.String())
-			if blk.LastBlock.Link != nil {
-				// TODO: check if blk have sub node,Need to check? Or is this correct to check?
-				recursive := request.Recursive
-				if nd, err := blk.Node.LookupByString("Links"); err != nil || nd.Length() == 0 {
-					recursive = false
+		if request.ResolveSubtreeRoot {
+			if request.Path == blk.Path.String() {
+				log.Debugf("recursive:%v path=%s", request.Recursive, blk.Path.String())
+				if blk.LastBlock.Link != nil {
+					// TODO: check if blk have sub node,Need to check? Or is this correct to check?
+					recursive := request.Recursive
+					if nd, err := blk.Node.LookupByString("Links"); err != nil || nd.Length() == 0 {
+						recursive = false
+					}
+					if recursive {
+						if sel, err := util.RootLeftSelector(""); err != nil {
+							m.returnedErrors <- err
+							// cancel this group request
+							exitCh <- struct{}{}
+							return
+						} else {
+							m.pushSubRequest(ctx, []subRequest{{
+								Root:       blk.LastBlock.Link,
+								Selector:   sel,
+								Extensions: m.extensions,
+							}})
+						}
+					}
 				}
-				if recursive {
-					if sel, err := util.RootLeftSelector(""); err != nil {
+			}
+		} else {
+			if nd, err := blk.Node.LookupByString("Links"); err == nil && nd.Length() > 1 {
+				path := blk.Path.String()
+				links := nd.Length()
+				peers := int64(m.pgManager.GetPeerCount())
+				requests := make([]subRequest, 0, peers)
+				usedLinks := int64(0)
+				for index := int64(0); index < peers; index++ {
+					remainLinks := links - usedLinks
+					if remainLinks <= 0 {
+						break
+					}
+					remainPeers := peers - index
+					avg := remainLinks / remainPeers
+					if remainLinks%remainPeers != 0 {
+						avg += 1
+					}
+
+					start := usedLinks
+					end := start + avg
+					usedLinks += avg
+
+					if sel, err := util.GenerateLeftSubRangeSelector(path, start, end); err != nil {
 						m.returnedErrors <- err
 						// cancel this group request
 						exitCh <- struct{}{}
 						return
 					} else {
-						m.pushSubRequest(ctx, []subRequest{{
-							Root:       blk.LastBlock.Link,
-							Selector:   sel,
-							Extensions: m.extensions,
-						}})
+						if _, loaded := m.inProgressReq.LoadOrStore(generateKey(request.Root, sel), struct{}{}); !loaded {
+							subPath := ""
+							// fill in the path field when there is only one ipld node
+							if end-start == 1 {
+								if path == "" {
+									subPath = "Links"
+								} else {
+									subPath = path + "/Links"
+								}
+								subPath = fmt.Sprintf("%s/%d/Hash/Links", subPath, start)
+							}
+							requests = append(requests, subRequest{
+								Root:       request.Root,
+								Selector:   sel,
+								Path:       subPath,
+								Extensions: request.Extensions,
+							})
+						}
 					}
+				}
+				if len(requests) > 0 {
+					m.pushSubRequest(ctx, requests)
 				}
 			}
 		}
@@ -319,11 +374,7 @@ func (m *ParallelRequestManger) handleRequest(ctx context.Context) {
 				go func(index int, id peer.ID) {
 					defer wg.Done()
 					defer m.pgManager.ReleasePeer(id)
-					if request[index].ResolveSubtreeRoot {
-						m.syncSubtreeRoot(ctx, id, request[index], exitCh)
-					} else {
-						m.syncData(ctx, id, request[index], exitCh)
-					}
+					m.syncSubtree(ctx, id, request[index], exitCh)
 				}(i, p)
 			}
 			remain := request[len(peers):]
@@ -371,87 +422,6 @@ func generateKey(root ipld.Link, sel ipld.Node) string {
 	h := sha256.New()
 	h.Write([]byte(s.String()))
 	return string(h.Sum(nil))
-}
-
-func (m *ParallelRequestManger) syncData(ctx context.Context, p peer.ID, request subRequest, exitCh chan<- struct{}) {
-	log.Debugf("subrequest, selector: %s", util.SelectorToJson(request.Selector))
-	defer func() {
-		log.Debugf("finish subrequest, selector: %s", util.SelectorToJson(request.Selector))
-	}()
-	responseProgress, errorsChan := m.exchange.Request(ctx, p, request.Root, request.Selector, request.Extensions...)
-	var wg sync.WaitGroup
-	wg.Add(1)
-	defer wg.Wait()
-	go func() {
-		defer wg.Done()
-		for e := range errorsChan {
-			if _, ok := e.(graphsync.RequestClientCancelledErr); ok {
-				// retry request
-				m.pushSubRequest(ctx, []subRequest{request})
-				return
-			}
-			m.returnedErrors <- e
-			// cancel this group request
-			exitCh <- struct{}{}
-			return
-		}
-	}()
-
-	for blk := range responseProgress {
-		m.returnedResponses <- blk
-
-		if nd, err := blk.Node.LookupByString("Links"); err == nil && nd.Length() > 1 {
-			path := blk.Path.String()
-			links := nd.Length()
-			peers := int64(m.pgManager.GetPeerCount())
-			requests := make([]subRequest, 0, peers)
-			usedLinks := int64(0)
-			for index := int64(0); index < peers; index++ {
-				remainLinks := links - usedLinks
-				if remainLinks <= 0 {
-					break
-				}
-				remainPeers := peers - index
-				avg := remainLinks / remainPeers
-				if remainLinks%remainPeers != 0 {
-					avg += 1
-				}
-
-				start := usedLinks
-				end := start + avg
-				usedLinks += avg
-
-				if sel, err := util.GenerateLeftSubRangeSelector(path, start, end); err != nil {
-					m.returnedErrors <- err
-					// cancel this group request
-					exitCh <- struct{}{}
-					return
-				} else {
-					if _, loaded := m.inProgressReq.LoadOrStore(generateKey(request.Root, sel), struct{}{}); !loaded {
-						subPath := ""
-						// fill in the path field when there is only one ipld node
-						if end-start == 1 {
-							if path == "" {
-								subPath = "Links"
-							} else {
-								subPath = path + "/Links"
-							}
-							subPath = fmt.Sprintf("%s/%d/Hash/Links", subPath, start)
-						}
-						requests = append(requests, subRequest{
-							Root:       request.Root,
-							Selector:   sel,
-							Path:       subPath,
-							Extensions: request.Extensions,
-						})
-					}
-				}
-			}
-			if len(requests) > 0 {
-				m.pushSubRequest(ctx, requests)
-			}
-		}
-	}
 }
 
 // close the Manger
