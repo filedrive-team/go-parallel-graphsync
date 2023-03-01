@@ -18,7 +18,7 @@ For example, we assume Node A needs to synchronize a 1GiB file and Node B, C, an
 
 The transmission speed from Node B, C, and D to A are all 1MB/s.
 
-![comparison diagram](./doc/compare.png)
+![comparison diagram](docs/compare.png)
 
 The results could be:
 
