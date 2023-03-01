@@ -2,21 +2,25 @@ package pgmanager
 
 import (
 	"context"
+	logging "github.com/ipfs/go-log/v2"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"go.uber.org/atomic"
 	"sort"
 )
 
+var log = logging.Logger("pgmanager")
+
 type PeerGroupManager struct {
-	peers      map[string]*PeerInfo
+	peers      map[peer.ID]*PeerInfo
+	cache      PeerInfos
 	idleNotify chan struct{}
 }
 
 type PeerInfo struct {
-	peer           peer.ID
-	idle           atomic.Bool
-	timeDelay      int64
-	transformSpeed uint64
+	peer  peer.ID
+	idle  atomic.Bool
+	ttfb  int64 // ms
+	speed int64 // B/s
 }
 
 type PeerInfos []*PeerInfo
@@ -25,8 +29,12 @@ func (p PeerInfos) Len() int {
 	return len(p)
 }
 
+// speed first
 func (p PeerInfos) Less(i, j int) bool {
-	return p[i].transformSpeed < p[j].transformSpeed
+	if p[i].speed == p[j].speed {
+		return p[i].ttfb < p[j].ttfb
+	}
+	return p[i].speed > p[j].speed
 }
 
 func (p PeerInfos) Swap(i, j int) {
@@ -35,7 +43,8 @@ func (p PeerInfos) Swap(i, j int) {
 
 func NewPeerGroupManager(peers []peer.ID) *PeerGroupManager {
 	mgr := &PeerGroupManager{
-		peers:      make(map[string]*PeerInfo),
+		peers:      make(map[peer.ID]*PeerInfo),
+		cache:      make(PeerInfos, 0, len(peers)),
 		idleNotify: make(chan struct{}, len(peers)),
 	}
 	for _, p := range peers {
@@ -43,29 +52,32 @@ func NewPeerGroupManager(peers []peer.ID) *PeerGroupManager {
 			peer: p,
 		}
 		pi.idle.Store(true)
-		mgr.peers[p.String()] = pi
+		mgr.peers[p] = pi
+		mgr.cache = append(mgr.cache, pi)
 		mgr.idleNotify <- struct{}{}
 	}
 	return mgr
 }
 
-func (pm *PeerGroupManager) UpdateSpeed(peerId string, transformSpeed uint64) {
-	pm.peers[peerId].transformSpeed = transformSpeed
+func (pm *PeerGroupManager) UpdateSpeed(peerId peer.ID, transformSpeed int64) {
+	log.Debugf("metrics peerid: %v speed: %v KB/s", peerId, transformSpeed/1024)
+	pm.peers[peerId].speed = transformSpeed
 }
 
-func (pm *PeerGroupManager) UpdateDelay(peerId string, timeDelay int64) {
-	pm.peers[peerId].timeDelay = timeDelay
+func (pm *PeerGroupManager) UpdateTTFB(peerId peer.ID, ttfb int64) {
+	log.Debugf("metrics peerid: %v ttfb: %v ms", peerId, ttfb)
+	pm.peers[peerId].ttfb = ttfb
 }
 
 func (pm *PeerGroupManager) LockPeer(peerId peer.ID) bool {
-	if pi, ok := pm.peers[peerId.String()]; ok {
+	if pi, ok := pm.peers[peerId]; ok {
 		return pi.idle.CompareAndSwap(true, false)
 	}
 	return false
 }
 
 func (pm *PeerGroupManager) ReleasePeer(peerId peer.ID) {
-	if pi, ok := pm.peers[peerId.String()]; ok {
+	if pi, ok := pm.peers[peerId]; ok {
 		pi.idle.Store(true)
 		pm.idleNotify <- struct{}{}
 	}
@@ -77,29 +89,21 @@ func (pm *PeerGroupManager) ReleasePeers(ids []peer.ID) {
 	}
 }
 
-func (pm *PeerGroupManager) GetPeerInfo(peerId string) *PeerInfo {
+func (pm *PeerGroupManager) GetPeerInfo(peerId peer.ID) *PeerInfo {
 	if info, ok := pm.peers[peerId]; ok {
 		return info
 	}
 	return nil
 }
 
+func (pm *PeerGroupManager) GetPeerInfoList() PeerInfos {
+	return pm.cache
+}
+
 func (pm *PeerGroupManager) getIdlePeers(top int) []peer.ID {
-	//for _, p := range pm.peers {
-	//	fmt.Println("before peerid:", p.peer, " idle:", p.idle.Load())
-	//}
-	//defer func() {
-	//	for _, p := range pm.peers {
-	//		fmt.Println("after peerid:", p.peer, " idle:", p.idle.Load())
-	//	}
-	//}()
 	resList := make([]peer.ID, 0, top)
-	list := make(PeerInfos, 0, len(pm.peers))
-	for _, p := range pm.peers {
-		list = append(list, p)
-	}
-	sort.Sort(list)
-	for _, p := range list {
+	sort.Sort(pm.cache)
+	for _, p := range pm.cache {
 		if pm.LockPeer(p.peer) {
 			resList = append(resList, p.peer)
 			if len(resList) == top {

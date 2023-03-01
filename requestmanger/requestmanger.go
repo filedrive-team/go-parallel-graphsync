@@ -495,33 +495,86 @@ func Ceil(x, y int) int {
 }
 
 func (m *ParallelRequestManger) RegisterCollectSpeedInfo(ctx context.Context) {
-	//type metrics struct {
-	//	lock  sync.Mutex
-	//	start int64
-	//	cost  int64
-	//	size  uint64
-	//}
-	//ti := make(map[string]*metrics, 1)
-	//m.exchange.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
-	//	if _, ok := ti[request.ID().String()]; !ok {
-	//		ti[request.ID().String()] = &metrics{start: time.Now().UnixNano()}
-	//	} else {
-	//		fmt.Printf("peer:%s requestID:%s\n", p.String(), request.ID())
-	//	}
-	//})
-	//m.exchange.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
-	//	id := p.String() + responseData.RequestID().String()
-	//	ti[id].lock.Lock()
-	//	defer ti[id].lock.Unlock()
-	//	ti[id].cost = time.Now().UnixNano() - ti[id].start
-	//	ti[id].size += blockData.BlockSize()
-	//	//todo:maybe more efficient
-	//	m.pgManager.UpdateSpeed(p.String(), calculateSpeed(ti[id].size, ti[id].cost))
-	//})
-}
+	type metrics struct {
+		start int64  // ms
+		cost  int64  // ms
+		size  uint64 // bytes
+		ttfb  int64  // ms
+	}
+	type task struct {
+		init   bool
+		pid    peer.ID
+		rid    graphsync.RequestID
+		now    int64 // ms
+		size   uint64
+		status graphsync.ResponseStatusCode
+	}
+	taskQueue := make(chan task, 1000)
 
-func calculateSpeed(x uint64, y int64) uint64 {
-	// byte/(ns/1000000)/1024=kb/ms
-	// todo more efficient calculation
-	return uint64(math.Ceil(float64(x) / (float64(y) / 1_000_000.0) / 1024))
+	m.exchange.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
+		select {
+		case taskQueue <- task{
+			init: true,
+			pid:  p,
+			rid:  request.ID(),
+			now:  time.Now().UnixMilli(),
+		}:
+		case <-ctx.Done():
+		}
+
+	})
+	m.exchange.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData,
+		hookActions graphsync.IncomingBlockHookActions) {
+		select {
+		case taskQueue <- task{
+			init:   false,
+			pid:    p,
+			rid:    responseData.RequestID(),
+			now:    time.Now().UnixMilli(),
+			size:   blockData.BlockSize(),
+			status: responseData.Status(),
+		}:
+		case <-ctx.Done():
+		}
+	})
+
+	go func() {
+		metricsMap := make(map[graphsync.RequestID]*metrics)
+		for {
+			select {
+			case tk := <-taskQueue:
+				if tk.init {
+					metricsMap[tk.rid] = &metrics{
+						start: tk.now,
+					}
+				} else {
+					requestID := tk.rid
+					item, ok := metricsMap[requestID]
+					if !ok {
+						log.Error("not exist request id in metricsMap")
+						continue
+					}
+
+					cost := tk.now - item.start
+					if cost > 0 {
+						if item.ttfb == 0 {
+							item.ttfb = cost
+							m.pgManager.UpdateTTFB(tk.pid, cost)
+						}
+						item.cost = cost
+						item.size += tk.size
+					}
+					if tk.status >= graphsync.RequestCompletedFull {
+						if item.cost > 0 {
+							m.pgManager.UpdateSpeed(tk.pid, int64(item.size)*1000/item.cost)
+						}
+						delete(metricsMap, requestID)
+					}
+				}
+			case <-ctx.Done():
+				close(taskQueue)
+				return
+			}
+		}
+	}()
 }
