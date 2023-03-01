@@ -2,114 +2,59 @@ package pgmanager
 
 import (
 	"context"
-	"fmt"
-	"github.com/filedrive-team/go-parallel-graphsync/util"
-	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/core/peerstore"
-	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
-	"github.com/multiformats/go-multiaddr"
-	"os"
-	"path"
+	"github.com/stretchr/testify/require"
 	"testing"
 )
 
-var pgsm *PeerGroupManager
-
-func TestMain(m *testing.M) {
-	keyFile := path.Join(os.TempDir(), "gsrespserver-host-key9620")
-	peerkey, err := util.LoadOrInitPeerKey(keyFile)
-	if err != nil {
-		panic(err)
+func TestPeerGroupManager(t *testing.T) {
+	peerStrList := []string{
+		"12D3KooWHxeZmgsaDquHDCaCRBAs736AMNUqMNrnso5orvjfiPd5",
+		"12D3KooWSqu5Kq5L9mSE6jxEgscbhfmR2HxaxnrGSkYqP2NPox4Z",
+		"12D3KooWKrz2k92ch1hUryMbt1KBY2v2gnvMLJ9zAGZ53X3hShhN",
+		"12D3KooWA3tABN8sGVqEWGxfcRza5bMW7sA3ccNUfZX2zunpGgYP",
 	}
-	cmgr, err := connmgr.NewConnManager(2000, 3000)
-	if err != nil {
-		panic(err)
-	}
-	opts := []libp2p.Option{
-		libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/9620"),
-		libp2p.ConnectionManager(cmgr),
-		libp2p.Identity(peerkey),
-		libp2p.DefaultTransports,
+	var peers []peer.ID
+	for _, pstr := range peerStrList {
+		p, _ := peer.Decode(pstr)
+		peers = append(peers, p)
 	}
 
-	host, err := libp2p.New(opts...)
-	if err != nil {
-		panic(err)
-	}
-
-	var peerIds []peer.ID
-	for i := 0; i < 3; i++ {
-		keyFile2 := path.Join(os.TempDir(), fmt.Sprintf("gsrespserver-host-key%v", 9630+i))
-		peerkey2, err1 := util.LoadOrInitPeerKey(keyFile2)
-		if err1 != nil {
-			panic(err1)
+	t.Run("Lock peers", func(t *testing.T) {
+		pgm := NewPeerGroupManager(peers)
+		peerIds := pgm.WaitIdlePeers(context.TODO(), 2)
+		for _, id := range peerIds {
+			require.Equal(t, false, pgm.GetPeerInfo(id).idle.Load())
 		}
-		cmgr2, err1 := connmgr.NewConnManager(2000, 3000)
-		if err1 != nil {
-			panic(err1)
+	})
+	t.Run("Release peers", func(t *testing.T) {
+		pgm := NewPeerGroupManager(peers)
+		peerIds := pgm.WaitIdlePeers(context.TODO(), 2)
+		pgm.ReleasePeers(peerIds)
+		for _, id := range peerIds {
+			require.Equal(t, true, pgm.GetPeerInfo(id).idle.Load())
 		}
-		opts2 := []libp2p.Option{
-			libp2p.ListenAddrStrings(fmt.Sprintf("/ip4/0.0.0.0/tcp/%v", 9630+i)),
-			libp2p.ConnectionManager(cmgr2),
-			libp2p.Identity(peerkey2),
-			libp2p.DefaultTransports,
+	})
+	t.Run("Best peers", func(t *testing.T) {
+		pgm := NewPeerGroupManager(peers)
+		expected := make([]peer.ID, 4)
+		peerIds := pgm.WaitIdlePeers(context.TODO(), 3)
+		for i, id := range peerIds {
+			pgm.UpdateTTFB(id, 100+int64(i))
+			if i == 1 {
+				pgm.UpdateSpeed(id, 300)
+				continue
+			}
+			pgm.UpdateSpeed(id, 300+int64(i)*100)
 		}
-
-		host2, err1 := libp2p.New(opts2...)
-		if err1 != nil {
-			panic(err1)
-		}
-		maddr, err1 := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/0.0.0.0/tcp/%v", 9630+i))
-		if err1 != nil {
-			panic(err1)
-		}
-		peerIds = append(peerIds, host2.ID())
-		host.Peerstore().AddAddr(host2.ID(), maddr, peerstore.PermanentAddrTTL)
-		err = host.Connect(context.TODO(), peer.AddrInfo{
-			ID: host2.ID(),
-		})
-		if err != nil {
-			panic(err1)
-		}
-	}
-	pgsm = NewPeerGroupManager(peerIds)
-	os.Exit(m.Run())
+		expected[0] = peerIds[2]
+		expected[1] = peerIds[0]
+		expected[2] = peerIds[1]
+		peerIds2 := pgm.WaitIdlePeers(context.TODO(), 1)
+		expected[3] = peerIds2[0]
+		peerIds = append(peerIds, peerIds2...)
+		pgm.ReleasePeers(peerIds)
+		peerIds = pgm.WaitIdlePeers(context.TODO(), 4)
+		require.EqualValues(t, expected, peerIds)
+	})
 }
-
-// TODO: fix me
-//func TestRecordDelay(t *testing.T) {
-//	ctx := context.Background()
-//	ctx, cancel := context.WithCancel(ctx)
-//	go pgsm.RecordDelay(ctx, time.Second*5)
-//	time.Sleep(time.Second * 15)
-//	cancel()
-//	for _, pgs := range pgsm.ParaGraphServers {
-//		require.NotEqual(t, 0, pgs.peerInfo.transformSpeed)
-//	}
-//
-//}
-//func TestUpdate(t *testing.T) {
-//	var speed uint64 = 100
-//	var delay, dealCount int64 = 10, 20
-//	var ctx = context.Background()
-//	pgsm.UpdateSpeed(ctx, addrInfos[0].ID.String(), speed)
-//	pgsm.UpdateDelay(ctx, addrInfos[0].ID.String(), delay)
-//	pgsm.UpdateDealCount(ctx, addrInfos[0].ID.String(), dealCount)
-//	pgsm.UpdateDealCount(ctx, addrInfos[1].ID.String(), dealCount)
-//	peerId := pgsm.GetIdlePeer(ctx)
-//	require.Equal(t, addrInfos[2].ID, peerId)
-//	info := pgsm.GetPeerInfo(context.TODO(), addrInfos[0].ID.String())
-//	require.Equal(t, PeerInfo{
-//		dealCount:      dealCount,
-//		timeDelay:      delay,
-//		transformSpeed: speed,
-//		addrInfo:       info.addrInfo,
-//	}, info)
-//	require.Equal(t, 3, pgsm.GetPeerCount(ctx))
-//	pgsm.FreeDealCount(ctx, []pargraphsync.RequestParam{{PeerId: addrInfos[0].ID}})
-//	require.Equal(t, int64(19), pgsm.GetPeerInfo(context.TODO(), addrInfos[0].ID.String()).dealCount)
-//	pgsm.RemovePeer(ctx, addrInfos[0].ID.String())
-//	info = pgsm.GetPeerInfo(context.TODO(), addrInfos[0].ID.String())
-//	require.Equal(t, PeerInfo{}, info)
-//}
