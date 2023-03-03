@@ -521,7 +521,7 @@ func (m *ParallelRequestManger) RegisterCollectSpeedInfo(ctx context.Context) {
 					requestID := tk.rid
 					item, ok := metricsMap[requestID]
 					if !ok {
-						log.Error("not exist request id in metricsMap")
+						// since the RequestCompletedFull state maybe carry multiple blocks, skip it here
 						continue
 					}
 
