@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+const LeftLinks = "Links/0/Hash"
+
 type trieNode struct {
 	segment  string
 	isEnding bool
@@ -76,7 +78,7 @@ func (t *trie) unionSelectorsFromTrieNode(nd *trieNode, isLeft bool) builder.Sel
 			}
 			return selectorSpec
 		} else {
-			selectorSpec, err := textselector.SelectorSpecFromPath(textselector.Expression(nd.segment), false, nil)
+			selectorSpec, err := GenerateDataSelectorSpec(nd.segment, false, nil)
 			if err != nil {
 				panic(err)
 				return nil
@@ -126,6 +128,22 @@ func UnionPathSelector(paths []string, isLeft bool) (ipld.Node, error) {
 	}
 	if len(paths) == 1 {
 		selectorSpec, err := textselector.SelectorSpecFromPath(textselector.Expression(paths[0]), false, nil)
+		return selectorSpec.Node(), err
+	}
+	trieTree := newTrieFromPath(paths)
+	sel := trieTree.ToSelector(isLeft)
+	if sel == nil {
+		return nil, fmt.Errorf("selector is nil")
+	}
+	return sel.Node(), nil
+}
+
+func UnionPathSelectorWeb(paths []string, isLeft bool) (ipld.Node, error) {
+	if len(paths) < 1 {
+		return nil, fmt.Errorf("paths should not be nil")
+	}
+	if len(paths) == 1 {
+		selectorSpec, err := GenerateDataSelectorSpec(paths[0], false, nil)
 		return selectorSpec.Node(), err
 	}
 	trieTree := newTrieFromPath(paths)

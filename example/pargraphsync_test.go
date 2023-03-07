@@ -24,25 +24,29 @@ import (
 	unixfile "github.com/ipfs/go-unixfs/file"
 	"github.com/ipfs/go-unixfs/importer/balanced"
 	ihelper "github.com/ipfs/go-unixfs/importer/helpers"
-	"github.com/ipld/go-ipld-prime/datamodel"
+	"github.com/ipfs/go-unixfsnode"
+	"github.com/ipld/go-ipld-prime"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	"github.com/ipld/go-ipld-prime/node/basicnode"
 	"github.com/ipld/go-ipld-prime/traversal/selector"
 	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
+	textselector "github.com/ipld/go-ipld-selector-text-lite"
 	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p-core/host"
-	"github.com/libp2p/go-libp2p-core/peer"
-	"github.com/libp2p/go-libp2p-core/peerstore"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/stretchr/testify/require"
 	"math/rand"
 	"os"
 	"path"
+	"sync"
 	"testing"
 	"time"
 )
 
 func TestParallelGraphSync(t *testing.T) {
+	//logging.SetLogLevel("parrequestmanger", "Debug")
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 
@@ -54,37 +58,99 @@ func TestParallelGraphSync(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sel1, err := util.GenerateSubRangeSelector("Links/0/Hash", 0, 3)
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	all := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
+	responseProgress, errors := globalParExchange.RequestMany(mainCtx, globalPeerIds, cidlink.Link{globalRoot}, all.Node())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		select {
+		case err := <-errors:
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}()
+
+	for blk := range responseProgress {
+		fmt.Printf("path=%s \n", blk.Path.String())
+		if nd, err := blk.Node.LookupByString("Links"); err == nil {
+			fmt.Printf("links=%d\n", nd.Length())
+		}
+	}
+	wg.Wait()
+
+	// restore to a file
+	rdag := merkledag.NewDAGService(blockservice.New(membs, offline.Exchange(membs)))
+	nd, err := rdag.Get(mainCtx, globalRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sel2, err := util.GenerateSubRangeSelector("Links/0/Hash", 3, 7)
+	file, err := unixfile.NewUnixfsFile(mainCtx, rdag, nd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sel3, err := util.GenerateSubRangeSelector("Links/0/Hash", 7, 11)
+	filePath := path.Join(t.TempDir(), "src")
+	if false {
+		filePath = "src"
+	}
+	err = NodeWriteTo(file, filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestParallelGraphSync2(t *testing.T) {
+	//logging.SetLogLevel("parrequestmanger", "Debug")
+	mainCtx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
+	const ServicesNum = 3
+	addrInfos, err := startSomeGraphSyncServices(mainCtx, ServicesNum, 9050, false, "QmREu6imfQ38NgCuSWMX5i9Vj9UATvF2CJfPoRu49p58iz.car")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyFile := path.Join(os.TempDir(), "gscli-key3")
+	ds := datastore.NewMapDatastore()
+	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
+
+	host, gscli, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9150", keyFile, bs)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	sels := []datamodel.Node{
-		sel1,
-		sel2,
-		sel3,
-	}
+	gscli.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
+		//	fmt.Printf("RegisterOutgoingRequestHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
+		hookActions.UsePersistenceOption("newLinkSys")
+	})
+	gscli.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
+		t.Logf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
+	})
 
-	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
-	for i := 0; i < len(sels); i++ {
-		params = append(params, pargraphsync.RequestParam{
-			PeerId:   globalAddrInfos[i].ID,
-			Root:     cidlink.Link{globalRoot},
-			Selector: sels[i],
-		})
-	}
+	peerIds := make([]peer.ID, 0, ServicesNum)
+	for i := 0; i < ServicesNum; i++ {
+		host.Peerstore().AddAddr(addrInfos[i].ID, addrInfos[i].Addrs[0], peerstore.PermanentAddrTTL)
 
-	reqFunc := func(params []pargraphsync.RequestParam) {
-		responseProgress, errors := globalParExchange.RequestMany(mainCtx, params)
+		peerIds = append(peerIds, addrInfos[i].ID)
+	}
+	root, _ := cid.Parse("QmREu6imfQ38NgCuSWMX5i9Vj9UATvF2CJfPoRu49p58iz")
+
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	all := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
+
+	t.Run("sync all", func(t *testing.T) {
+		gscli.UnregisterPersistenceOption("newLinkSys")
+		memds := datastore.NewMapDatastore()
+		membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
+		newlsys := storeutil.LinkSystemForBlockstore(membs)
+		if err := gscli.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+			t.Fatal(err)
+		}
+		responseProgress, errors := gscli.RequestMany(mainCtx, peerIds, cidlink.Link{root}, all.Node())
+		var wg sync.WaitGroup
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			select {
 			case err := <-errors:
 				if err != nil {
@@ -99,15 +165,11 @@ func TestParallelGraphSync(t *testing.T) {
 				fmt.Printf("links=%d\n", nd.Length())
 			}
 		}
-	}
+		wg.Wait()
 
-	reqFunc(params[:1])
-	reqFunc(params[1:])
-
-	// restore to a file
-	if false {
-		rdag := merkledag.NewDAGService(blockservice.New(globalBs, offline.Exchange(globalBs)))
-		nd, err := rdag.Get(mainCtx, globalRoot)
+		// restore to a file
+		rdag := merkledag.NewDAGService(blockservice.New(membs, offline.Exchange(membs)))
+		nd, err := rdag.Get(mainCtx, root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -115,14 +177,387 @@ func TestParallelGraphSync(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = NodeWriteTo(file, "./src")
+		filePath := path.Join(t.TempDir(), "nft")
+		if false {
+			filePath = "nft"
+		}
+		err = NodeWriteTo(file, filePath)
 		if err != nil {
 			t.Fatal(err)
 		}
+	})
+
+	t.Run("sync a file by Links", func(t *testing.T) {
+		gscli.UnregisterPersistenceOption("newLinkSys")
+		memds := datastore.NewMapDatastore()
+		membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
+		newlsys := storeutil.LinkSystemForBlockstore(membs)
+		if err := gscli.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+			t.Fatal(err)
+		}
+		sel, err := util.GenerateDataSelectorSpec("Links/3/Hash", false, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		responseProgress, errors := gscli.RequestMany(mainCtx, peerIds, cidlink.Link{root}, sel.Node())
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case err := <-errors:
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+		}()
+
+		for blk := range responseProgress {
+			fmt.Printf("path=%s \n", blk.Path.String())
+			if nd, err := blk.Node.LookupByString("Links"); err == nil {
+				fmt.Printf("links=%d\n", nd.Length())
+			}
+		}
+		wg.Wait()
+
+		// restore to a file
+		rdag := merkledag.NewDAGService(blockservice.New(membs, offline.Exchange(membs)))
+		jpgRoot, _ := cid.Parse("QmRqb6EVXSrtU7wZyvTrUqDfNJLeMKyGfs1fiPb1iww8Pt")
+		nd, err := rdag.Get(mainCtx, jpgRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file, err := unixfile.NewUnixfsFile(mainCtx, rdag, nd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		filePath := path.Join(t.TempDir(), "3.jpg")
+		if false {
+			filePath = "3.jpg"
+		}
+		err = NodeWriteTo(file, filePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("sync a file by Links", func(t *testing.T) {
+		gscli.UnregisterPersistenceOption("newLinkSys")
+		memds := datastore.NewMapDatastore()
+		membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
+		newlsys := storeutil.LinkSystemForBlockstore(membs)
+		if err := gscli.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+			t.Fatal(err)
+		}
+		sel, err := util.GenerateDataSelectorSpec("Links/5/Hash", false, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		responseProgress, errors := gscli.RequestMany(mainCtx, peerIds, cidlink.Link{root}, sel.Node())
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case err := <-errors:
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+		}()
+
+		for blk := range responseProgress {
+			fmt.Printf("path=%s \n", blk.Path.String())
+			if nd, err := blk.Node.LookupByString("Links"); err == nil {
+				fmt.Printf("links=%d\n", nd.Length())
+			}
+		}
+		wg.Wait()
+
+		// restore to a file
+		rdag := merkledag.NewDAGService(blockservice.New(membs, offline.Exchange(membs)))
+		jpgRoot, _ := cid.Parse("QmfD43LXLKC1PCA9rxcPzUvMpdAuCAeJyinmKAcYnWsDUP")
+		nd, err := rdag.Get(mainCtx, jpgRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file, err := unixfile.NewUnixfsFile(mainCtx, rdag, nd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		filePath := path.Join(t.TempDir(), "14.jpg")
+		if false {
+			filePath = "14.jpg"
+		}
+		err = NodeWriteTo(file, filePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("sync a file by unixfs", func(t *testing.T) {
+		gscli.UnregisterPersistenceOption("newLinkSys")
+		memds := datastore.NewMapDatastore()
+		membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
+		newlsys := storeutil.LinkSystemForBlockstore(membs)
+		if err := gscli.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+			t.Fatal(err)
+		}
+		sel := unixfsnode.UnixFSPathSelector("14.jpg")
+		responseProgress, errors := gscli.RequestMany(mainCtx, peerIds, cidlink.Link{root}, sel)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case err := <-errors:
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+		}()
+
+		for blk := range responseProgress {
+			fmt.Printf("path=%s \n", blk.Path.String())
+			if nd, err := blk.Node.LookupByString("Links"); err == nil {
+				fmt.Printf("links=%d\n", nd.Length())
+			}
+		}
+		wg.Wait()
+
+		// restore to a file
+		rdag := merkledag.NewDAGService(blockservice.New(membs, offline.Exchange(membs)))
+		jpgRoot, _ := cid.Parse("QmfD43LXLKC1PCA9rxcPzUvMpdAuCAeJyinmKAcYnWsDUP")
+		nd, err := rdag.Get(mainCtx, jpgRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file, err := unixfile.NewUnixfsFile(mainCtx, rdag, nd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		filePath := path.Join(t.TempDir(), "14-2.jpg")
+		if false {
+			filePath = "14-2.jpg"
+		}
+		err = NodeWriteTo(file, filePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestSimpleParGraphSyncRequest(t *testing.T) {
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	all := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
+	sel, _ := textselector.SelectorSpecFromPath("Links/2/Hash", false, all)
+	cidNotFound, _ := cid.Parse("QmSvtt6abwrp3MybYqHHA4BdFjjuLBABXjLEVQKpMUfUU7")
+	testCases := []struct {
+		name string
+		sel  ipld.Node
+		ci   cidlink.Link
+		err  error
+	}{
+		{
+			name: "cid-notfound",
+			sel:  sel.Node(),
+			ci:   cidlink.Link{Cid: cidNotFound},
+			err:  graphsync.RequestFailedContentNotFoundErr{},
+		},
+		{
+			name: "cid-correct",
+			sel:  sel.Node(),
+			ci:   cidlink.Link{Cid: bigCarRootCid},
+			err:  nil,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			responseProgress, errors := bigCarParExchange.RequestMany(context.TODO(), bigCarPeerIds, tc.ci, tc.sel)
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				select {
+				case err := <-errors:
+					require.Equal(t, tc.err, err)
+				}
+			}()
+
+			for _ = range responseProgress {
+			}
+			//
+			//for blk := range responseProgress {
+			//	fmt.Printf("path=%s \n", blk.Path.String())
+			//	if nd, err := blk.Node.LookupByString("Links"); err == nil {
+			//		fmt.Printf("links=%d\n", nd.Length())
+			//	}
+			//}
+
+			wg.Wait()
+		})
+	}
+}
+
+func TestParGraphSyncRequestMangerSubtree(t *testing.T) {
+	sel1, _ := textselector.SelectorSpecFromPath("Links/2/Hash", false, nil)
+	sel2, _ := textselector.SelectorSpecFromPath("Links/3/Hash", false, nil)
+	testCases := []struct {
+		name   string
+		sel    ipld.Node
+		expect error
+	}{
+		{
+			name:   "Links/2/Hash",
+			sel:    sel1.Node(),
+			expect: nil,
+		},
+		{
+			name:   "Links/3/Hash",
+			sel:    sel2.Node(),
+			expect: nil,
+		},
+	}
+	for _, tc := range testCases {
+		responseProgress, errors := bigCarParExchange.RequestMany(context.TODO(), bigCarPeerIds, cidlink.Link{Cid: bigCarRootCid}, tc.sel)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case err := <-errors:
+				require.Equal(t, tc.expect, err)
+			}
+		}()
+
+		for blk := range responseProgress {
+			fmt.Printf("path=%s \n", blk.Path.String())
+			if nd, err := blk.Node.LookupByString("Links"); err == nil {
+				fmt.Printf("links=%d\n", nd.Length())
+			}
+		}
+		wg.Wait()
+	}
+
+}
+
+func TestParGraphSyncRequestMangerParseSelector(t *testing.T) {
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	all := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
+	fromPath1, _ := textselector.SelectorSpecFromPath("/0/Hash", true, nil)
+	fromPath2, _ := textselector.SelectorSpecFromPath("/1/Hash", false, all)
+	fromPath3, _ := textselector.SelectorSpecFromPath("/2/Hash", false, all)
+	fromPath4, _ := textselector.SelectorSpecFromPath("/3/Hash", false, all)
+
+	selu1 := ssb.ExploreUnion(fromPath1, fromPath2)
+	selu2 := ssb.ExploreUnion(fromPath1, fromPath2, fromPath3)
+
+	selSameDepth, _ := textselector.SelectorSpecFromPath("Links", false, selu1)
+
+	seldiff1, _ := textselector.SelectorSpecFromPath("/0/Hash/Links", false, fromPath1)
+	selDiffDepth, _ := textselector.SelectorSpecFromPath("Links", false, ssb.ExploreUnion(seldiff1, fromPath4))
+
+	seldiffsame1, _ := textselector.SelectorSpecFromPath("/0/Hash/Links", false, selu1)
+	seldiffsame2 := ssb.ExploreUnion(seldiffsame1, fromPath4)
+	selDiffSamePath, _ := textselector.SelectorSpecFromPath("Links", false, seldiffsame2)
+
+	selmore1, _ := textselector.SelectorSpecFromPath("/0/Hash/Links", false, selu2)
+	selmore2, _ := textselector.SelectorSpecFromPath("/2/Hash/Links/2/Hash", false, all)
+	selmore3, _ := textselector.SelectorSpecFromPath("/4/Hash/Links/1/Hash", false, all)
+	selMore, _ := textselector.SelectorSpecFromPath("Links", false, ssb.ExploreUnion(selmore1, selmore2, selmore3, fromPath4))
+
+	selRange1 := ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+		specBuilder.Insert("Links", ssb.ExploreRange(1, 4,
+			ssb.ExploreIndex(0, ssb.Matcher())))
+	}).Node()
+	selRange2, _ := util.GenerateSubRangeSelector("Links/0/Hash", false, 1, 4, nil)
+	testCases := []struct {
+		name     string
+		sel      ipld.Node
+		resPaths []string
+		expect   error
+	}{
+		{
+			name: "same-depth",
+			sel:  selSameDepth.Node(),
+			resPaths: []string{"Links/0/Hash",
+				"Links/1/Hash",
+			},
+			expect: nil,
+		},
+
+		{
+			name: "diff-depth",
+			sel:  selDiffDepth.Node(),
+			resPaths: []string{"Links/0/Hash/Links/0/Hash",
+				"Links/3/Hash",
+			},
+			expect: nil,
+		},
+		{
+			name: "diff-depth & same-path",
+			sel:  selDiffSamePath.Node(),
+			resPaths: []string{"Links/0/Hash/Links/0/Hash",
+				"Links/0/Hash/Links/1/Hash",
+				"Links/3/Hash",
+			},
+			expect: nil,
+		},
+		{
+			name: "more",
+			sel:  selMore.Node(),
+			resPaths: []string{"Links/0/Hash/Links/0/Hash",
+				"Links/0/Hash/Links/1/Hash",
+				"Links/0/Hash/Links/2/Hash",
+				"Links/2/Hash/Links/2/Hash",
+				"Links/4/Hash/Links/1/Hash",
+				"Links/3/Hash",
+			},
+			expect: nil,
+		},
+		{
+			name: "range&index",
+			sel:  selRange1,
+			resPaths: []string{"Links/0/Hash",
+				"Links/1/Hash",
+				"Links/2/Hash",
+				"Links/3/Hash",
+			},
+			expect: nil,
+		},
+		{
+			name: "range",
+			sel:  selRange2,
+			resPaths: []string{"Links/0/Hash/Links/1/Hash",
+				"Links/0/Hash/Links/2/Hash",
+				"Links/0/Hash/Links/3/Hash",
+			},
+			expect: nil,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			responseProgress, errors := bigCarParExchange.RequestMany(context.TODO(), bigCarPeerIds, cidlink.Link{Cid: bigCarRootCid}, tc.sel)
+			go func() {
+				select {
+				case err := <-errors:
+					require.Equal(t, tc.expect, err)
+				}
+			}()
+
+			for blk := range responseProgress {
+				fmt.Printf("path=%s \n", blk.Path.String())
+				if nd, err := blk.Node.LookupByString("Links"); err == nil {
+					fmt.Printf("links=%d\n", nd.Length())
+				}
+			}
+		})
+
 	}
 }
 
 func BenchmarkGraphSync(b *testing.B) {
+	//logging.SetLogLevel("parrequestmanger", "Debug")
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 	const ServicesNum = 3
@@ -145,32 +580,11 @@ func BenchmarkGraphSync(b *testing.B) {
 		hookActions.UsePersistenceOption("newLinkSys")
 	})
 
-	sel1, err := util.GenerateSubRangeSelector("", 0, 100)
-	if err != nil {
-		b.Fatal(err)
-	}
-	sel2, err := util.GenerateSubRangeSelector("", 100, 200)
-	if err != nil {
-		b.Fatal(err)
-	}
-	sel3, err := util.GenerateSubRangeSelector("", 200, 300)
-	if err != nil {
-		b.Fatal(err)
-	}
-	sels := []datamodel.Node{
-		sel1,
-		sel2,
-		sel3,
-	}
-	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
+	peerIds := make([]peer.ID, 0, ServicesNum)
 	for i := 0; i < ServicesNum; i++ {
 		host.Peerstore().AddAddr(addrInfos[i].ID, addrInfos[i].Addrs[0], peerstore.PermanentAddrTTL)
 
-		params = append(params, pargraphsync.RequestParam{
-			PeerId:   addrInfos[i].ID,
-			Root:     cidlink.Link{rootCid},
-			Selector: sels[i],
-		})
+		peerIds = append(peerIds, addrInfos[i].ID)
 	}
 
 	// graphsync init
@@ -185,7 +599,10 @@ func BenchmarkGraphSync(b *testing.B) {
 	})
 	host2.Peerstore().AddAddr(addrInfos[0].ID, addrInfos[0].Addrs[0], peerstore.PermanentAddrTTL)
 
-	b.Run("Parallel-Grapysync request to 3 service", func(b *testing.B) {
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	all := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
+
+	b.Run("Parallel-Graphsync request to 3 services", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			b.StopTimer()
@@ -199,7 +616,7 @@ func BenchmarkGraphSync(b *testing.B) {
 			b.StartTimer()
 
 			ctx := context.Background()
-			responseProgress, errors := gscli.RequestMany(ctx, params)
+			responseProgress, errors := gscli.RequestMany(ctx, peerIds, cidlink.Link{rootCid}, all.Node())
 			go func() {
 				select {
 				case err := <-errors:
@@ -210,16 +627,9 @@ func BenchmarkGraphSync(b *testing.B) {
 			}()
 			for range responseProgress {
 			}
-			has, err := membs.Has(mainCtx, rootCid)
-			if err != nil {
-				b.Fatal(err)
-			}
-			if !has {
-				b.Fatal("not pass")
-			}
 		}
 	})
-	b.Run("Grapysync request to 1 service", func(b *testing.B) {
+	b.Run("Graphsync request to 1 service", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			b.StopTimer()
@@ -233,11 +643,7 @@ func BenchmarkGraphSync(b *testing.B) {
 			b.StartTimer()
 
 			ctx := context.Background()
-			sel, err := util.GenerateSubRangeSelector("", 0, 300)
-			if err != nil {
-				b.Fatal(err)
-			}
-			responseProgress, errors := gscli2.Request(ctx, params[0].PeerId, params[0].Root, sel)
+			responseProgress, errors := gscli2.Request(ctx, peerIds[0], cidlink.Link{rootCid}, all.Node())
 			go func() {
 				select {
 				case err := <-errors:
@@ -267,92 +673,6 @@ func BenchmarkGraphSync(b *testing.B) {
 
 }
 
-func TestParallelGraphSyncExploreRecursiveLeftNode(t *testing.T) {
-	mainCtx, cancel := context.WithCancel(context.TODO())
-	defer cancel()
-	const ServicesNum = 3
-	servbs, root := CreateTestBlockstore(mainCtx)
-	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9210, servbs, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	keyFile := path.Join(os.TempDir(), "gs-prakey")
-	ds := datastore.NewMapDatastore()
-	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
-
-	host, gs, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9220", keyFile, bs)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	gs.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
-		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
-	})
-
-	selPath := "Links/0/Hash"
-	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
-	subsel := ssb.ExploreRecursive(selector.RecursionLimitNone(),
-		ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
-			specBuilder.Insert("Links", ssb.ExploreUnion(
-				//ssb.ExploreRange(start, end, ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
-				ssb.ExploreIndex(0, ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
-			),
-			)
-		}))
-	selSpec, err := util.GenerateDataSelectorSpec(selPath, false, subsel)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sels := []datamodel.Node{
-		selSpec.Node(),
-	}
-	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
-	for i := 0; i < len(sels); i++ {
-		host.Peerstore().AddAddr(addrInfos[i].ID, addrInfos[i].Addrs[0], peerstore.PermanentAddrTTL)
-
-		params = append(params, pargraphsync.RequestParam{
-			PeerId:   addrInfos[i].ID,
-			Root:     cidlink.Link{root},
-			Selector: sels[i],
-		})
-	}
-
-	ctx := context.Background()
-	responseProgress, errors := gs.RequestMany(ctx, params)
-	go func() {
-		select {
-		case err := <-errors:
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-	}()
-	for blk := range responseProgress {
-		fmt.Printf("path=%s \n", blk.Path.String())
-		if nd, err := blk.Node.LookupByString("Links"); err == nil {
-			fmt.Printf("links=%d\n", nd.Length())
-		}
-
-	}
-
-	// restore to a file
-	if false {
-		rdag := merkledag.NewDAGService(blockservice.New(bs, offline.Exchange(bs)))
-		nd, err := rdag.Get(mainCtx, root)
-		if err != nil {
-			t.Fatal(err)
-		}
-		file, err := unixfile.NewUnixfsFile(mainCtx, rdag, nd)
-		if err != nil {
-			t.Fatal(err)
-		}
-		err = NodeWriteTo(file, "./src")
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
 func TestParallelGraphSyncControl(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
@@ -378,38 +698,23 @@ func TestParallelGraphSyncControl(t *testing.T) {
 		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
 	})
 
-	sel1, err := util.GenerateSubRangeSelector("", 0, 100)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sel2, err := util.GenerateSubRangeSelector("", 100, 200)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sel3, err := util.GenerateSubRangeSelector("", 200, 300)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sels := []datamodel.Node{
-		sel1,
-		sel2,
-		sel3,
-	}
-	params := make([]pargraphsync.RequestParam, 0, ServicesNum)
-	for i := 0; i < len(sels); i++ {
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	all := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
+
+	peerIds := make([]peer.ID, 0, ServicesNum)
+	for i := 0; i < len(addrInfos); i++ {
 		host.Peerstore().AddAddr(addrInfos[i].ID, addrInfos[i].Addrs[0], peerstore.PermanentAddrTTL)
 
-		params = append(params, pargraphsync.RequestParam{
-			PeerId:   addrInfos[i].ID,
-			Root:     cidlink.Link{rootCid},
-			Selector: sels[i],
-		})
+		peerIds = append(peerIds, addrInfos[i].ID)
 	}
 
 	groupRequestID := graphsync.NewRequestID()
 	cliCtx := context.WithValue(context.TODO(), pargraphsync.GroupRequestIDContextKey{}, groupRequestID)
-	responseProgress, errors := gs.RequestMany(cliCtx, params)
+	responseProgress, errors := gs.RequestMany(cliCtx, peerIds, cidlink.Link{rootCid}, all.Node())
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for err := range errors {
 			// Occasionally, a load Link error is encountered
 			t.Logf("rootCid=%s error=%v", rootCid, err)
@@ -431,10 +736,77 @@ func TestParallelGraphSyncControl(t *testing.T) {
 			fmt.Printf("links=%d\n", nd.Length())
 		}
 	}
+	wg.Wait()
 }
 
-func startPraGraphSyncClient(ctx context.Context, listenAddr string, keyFile string, bs blockstore.Blockstore) (host.Host, pargraphsync.ParallelGraphExchange, error) {
-	peerkey, err := loadOrInitPeerKey(keyFile)
+func TestParallelGraphSyncCancel(t *testing.T) {
+	mainCtx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
+	const ServicesNum = 3
+	servbs, rootCid := CreateRandomBytesBlockStore(mainCtx, 300*1024*1024)
+	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9310, servbs, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyFile := path.Join(os.TempDir(), "gs-prakey")
+	ds := datastore.NewMapDatastore()
+	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
+
+	host, gs, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9320", keyFile, bs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gs.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
+		groupReq := gs.GetGroupRequestBySubRequestId(responseData.RequestID())
+		require.NotNil(t, groupReq)
+		t.Logf("groupRequestID=%s subRequestID=%s", groupReq.GetGroupRequestID(), responseData.RequestID())
+		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
+	})
+
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	all := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
+
+	peerIds := make([]peer.ID, 0, ServicesNum)
+	for i := 0; i < len(addrInfos); i++ {
+		host.Peerstore().AddAddr(addrInfos[i].ID, addrInfos[i].Addrs[0], peerstore.PermanentAddrTTL)
+
+		peerIds = append(peerIds, addrInfos[i].ID)
+	}
+
+	groupRequestID := graphsync.NewRequestID()
+	cliCtx := context.WithValue(context.TODO(), pargraphsync.GroupRequestIDContextKey{}, groupRequestID)
+	responseProgress, errors := gs.RequestMany(cliCtx, peerIds, cidlink.Link{rootCid}, all.Node())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for err := range errors {
+			// Occasionally, a load Link error is encountered
+			t.Logf("rootCid=%s error=%v", rootCid, err)
+		}
+	}()
+	time.Sleep(100 * time.Millisecond)
+	err = gs.Cancel(cliCtx, groupRequestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for blk := range responseProgress {
+		fmt.Printf("path=%s \n", blk.Path.String())
+		if nd, err := blk.Node.LookupByString("Links"); err == nil {
+			fmt.Printf("links=%d\n", nd.Length())
+		}
+	}
+	wg.Wait()
+}
+
+func startPraGraphSyncClient(
+	ctx context.Context,
+	listenAddr string,
+	keyFile string,
+	bs blockstore.Blockstore,
+) (host.Host, pargraphsync.ParallelGraphExchange, error) {
+	peerkey, err := util.LoadOrInitPeerKey(keyFile)
 	if err != nil {
 		return nil, nil, err
 	}

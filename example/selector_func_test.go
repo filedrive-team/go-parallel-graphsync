@@ -3,7 +3,6 @@ package example
 import (
 	"context"
 	"fmt"
-	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
 	"github.com/filedrive-team/go-parallel-graphsync/util"
 	"github.com/filedrive-team/go-parallel-graphsync/util/parseselector"
 	"github.com/ipfs/go-cid"
@@ -18,140 +17,44 @@ import (
 	"github.com/ipld/go-ipld-prime/traversal/selector"
 	"github.com/ipld/go-ipld-prime/traversal/selector/builder"
 	textselector "github.com/ipld/go-ipld-selector-text-lite"
-	"github.com/libp2p/go-libp2p-core/peer"
-	"github.com/libp2p/go-libp2p-core/peerstore"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
 	"os"
 	"path"
 	"strings"
 	"testing"
 )
 
-func startWithBigCar() (pargraphsync.ParallelGraphExchange, []peer.AddrInfo) {
-	mainCtx, cancel := context.WithCancel(context.TODO())
-	defer cancel()
-	bs, err := loadCarV2Blockstore("big-v2.car")
+func startWithBigCar(ctx context.Context) {
+	//mainCtx, cancel := context.WithCancel(context.Background())
+	//defer cancel()
+
+	addrInfos, err := startSomeGraphSyncServices(ctx, ServicesNum, 9030, false, "big-v2.car")
 	if err != nil {
 		panic(err)
 	}
-	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, 3, 9820, bs, false)
-	if err != nil {
-		panic(err)
+	bigCarPeerIds = make([]peer.ID, 0, len(addrInfos))
+	for i := 0; i < len(addrInfos); i++ {
+		bigCarPeerIds = append(bigCarPeerIds, addrInfos[i].ID)
 	}
-	keyFile := path.Join(os.TempDir(), "gs-key9720")
-	host, pgs, err := startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9720", keyFile, bs)
+
+	keyFile := path.Join(os.TempDir(), "gs-key-big")
+	ds := datastore.NewMapDatastore()
+	bs := blockstore.NewBlockstore(dssync.MutexWrap(ds))
+	bigCarHost, bigCarParExchange, err = startPraGraphSyncClient(context.TODO(), "/ip4/0.0.0.0/tcp/9040", keyFile, bs)
 	if err != nil {
 		panic(err)
 	}
 
-	//this is for testing result if right , so other Register is not important.
-	pgs.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
+	bigCarParExchange.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
 		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
 	})
-	for _, addr := range addrInfos {
-		host.Peerstore().AddAddr(addr.ID, addr.Addrs[0], peerstore.PermanentAddrTTL)
+	// QmTTSVQrNxBvQDXevh3UvToezMw1XQ5hvTMCwpDc8SDnNT
+	// Qmf5VLQUwEf4hi8iWqBWC21ws64vWW6mJs9y6tSCLunz5Y
+	bigCarRootCid, _ = cid.Parse("QmSvtt6abwrp3MybYqHHA4BdFjjuLBABXjLEVQKpMUfUU8")
+	for _, addrInfo := range addrInfos {
+		bigCarHost.Peerstore().AddAddr(addrInfo.ID, addrInfo.Addrs[0], peerstore.PermanentAddrTTL)
 	}
-	return pgs, addrInfos
-}
-
-func TestSimpleDivideSelector(t *testing.T) {
-	var s = util.ParGSTask{
-		Gs:           bigCarParExchange,
-		AddedTasks:   make(map[string]struct{}),
-		StartedTasks: make(map[string]struct{}),
-		RunningTasks: make(chan util.Tasks, 1),
-		DoneTasks:    make(map[string]struct{}),
-		RootCid:      cidlink.Link{Cid: bigCarRootCid},
-		PeerIds:      bigCarAddrInfos,
-	}
-
-	testCases := []struct {
-		name      string
-		links     []string
-		num       []int64
-		paths     []string
-		expectRes bool
-	}{
-		{
-			name:  "normal-true",
-			links: []string{"Links", "Links/0/Hash/Links"},
-			num:   []int64{3, 2},
-			paths: []string{
-				"Links/0/Hash/Links/0/Hash",
-				"Links/0/Hash/Links/1/Hash",
-				"Links/0/Hash",
-				"Links/1/Hash",
-				"Links/2/Hash",
-			},
-			expectRes: true,
-		},
-		{
-			name:  "normal-false",
-			links: []string{"Links", "Links/0/Hash/Links"},
-			num:   []int64{3, 2},
-			paths: []string{
-				"Links/0/Hash/Links/0/Hash",
-				"Links/0/Hash/Links/1/Hash",
-				"Links/0/Hash",
-				"Links/1/Hash",
-				"Links/3/Hash",
-			},
-			expectRes: false,
-		},
-		{
-			name:  "more-true",
-			links: []string{"Links", "Links/1/Hash/Links"},
-			num:   []int64{5, 4},
-			paths: []string{
-				"Links/1/Hash/Links/0/Hash",
-				"Links/1/Hash/Links/1/Hash",
-				"Links/1/Hash/Links/2/Hash",
-				"Links/1/Hash/Links/3/Hash",
-				"Links/0/Hash",
-				"Links/1/Hash",
-				"Links/2/Hash",
-				"Links/3/Hash",
-				"Links/4/Hash",
-			},
-			expectRes: true,
-		},
-		{
-			name:  "more-links",
-			links: []string{"Links", "Links/1/Hash/Links", "Links/2/Hash/Links"},
-			num:   []int64{5, 4, 3},
-			paths: []string{
-				"Links/0/Hash",
-				"Links/1/Hash",
-				"Links/2/Hash",
-				"Links/3/Hash",
-				"Links/4/Hash",
-				"Links/1/Hash/Links/0/Hash",
-				"Links/1/Hash/Links/1/Hash",
-				"Links/1/Hash/Links/2/Hash",
-				"Links/1/Hash/Links/3/Hash",
-				"Links/2/Hash/Links/0/Hash",
-				"Links/2/Hash/Links/1/Hash",
-				"Links/2/Hash/Links/2/Hash",
-			},
-			expectRes: true,
-		},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			var pathMap = make(map[string]int64)
-			for i, link := range testCase.links {
-				pathMap[link] = testCase.num[i]
-			}
-			//simulate the collection of child nodes and child node information
-			s.CollectTasks(pathMap)
-
-			s.StartRun(context.TODO())
-			if compare(s.DoneTasks, testCase.paths) != testCase.expectRes {
-				t.Fatal("not equal")
-			}
-		})
-	}
-
 }
 
 //Test whether the selector generated by the different subtrees identified by the given selector can obtain the corresponding subtree cid,
@@ -185,7 +88,7 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 		specBuilder.Insert("Links", ssb.ExploreRange(1, 4,
 			ssb.ExploreIndex(0, ssb.Matcher())))
 	}).Node()
-	selRange2, _ := util.GenerateSubRangeSelector("Links/0/Hash", 1, 4)
+	selRange2, _ := util.GenerateSubRangeSelector("Links/0/Hash", false, 1, 4, nil)
 	testCases := []struct {
 		name     string
 		selRes   ipld.Node
@@ -281,7 +184,7 @@ func TestSimpleParseGivenSelector(t *testing.T) {
 			}
 			var cids []string
 			for i, ne := range parsed {
-				responseProgress, errors := bigCarParExchange.Request(context.TODO(), bigCarAddrInfos[i%3].ID, cidlink.Link{Cid: bigCarRootCid}, ne.Sel)
+				responseProgress, errors := bigCarParExchange.Request(context.TODO(), bigCarPeerIds[i%3], cidlink.Link{Cid: bigCarRootCid}, ne.Sel)
 				go func() {
 					select {
 					case err := <-errors:
@@ -408,7 +311,6 @@ func TestSimpleParseGivenUnixFSSelector(t *testing.T) {
 						cids = append(cids, blk.LastBlock.Link.String())
 					}
 				}
-
 			}
 			if !pathInPath(tc.cids, cids) {
 				t.Fatal("fail")
@@ -416,22 +318,4 @@ func TestSimpleParseGivenUnixFSSelector(t *testing.T) {
 		})
 
 	}
-}
-
-func compare(doneTasks map[string]struct{}, paths2 []string) bool {
-	for _, pa2 := range paths2 {
-		have := false
-		for pa1 := range doneTasks {
-			if pa1 == pa2 {
-				have = true
-				break
-			}
-		}
-		if have {
-			continue
-		} else {
-			return false
-		}
-	}
-	return true
 }

@@ -5,315 +5,48 @@ import (
 	"errors"
 	pargraphsync "github.com/filedrive-team/go-parallel-graphsync"
 	"github.com/filedrive-team/go-parallel-graphsync/groupreq"
+	"github.com/filedrive-team/go-parallel-graphsync/requestmanger"
 	"github.com/ipfs/go-graphsync"
-	"github.com/ipfs/go-graphsync/allocator"
-	"github.com/ipfs/go-graphsync/listeners"
-	gsmsg "github.com/ipfs/go-graphsync/message"
-	"github.com/ipfs/go-graphsync/messagequeue"
+	graphsyncImpl "github.com/ipfs/go-graphsync/impl"
 	gsnet "github.com/ipfs/go-graphsync/network"
-	"github.com/ipfs/go-graphsync/panics"
-	"github.com/ipfs/go-graphsync/peermanager"
-	"github.com/ipfs/go-graphsync/peerstate"
-	"github.com/ipfs/go-graphsync/persistenceoptions"
-	"github.com/ipfs/go-graphsync/requestmanager"
-	"github.com/ipfs/go-graphsync/requestmanager/executor"
-	requestorhooks "github.com/ipfs/go-graphsync/requestmanager/hooks"
-	"github.com/ipfs/go-graphsync/responsemanager"
-	responderhooks "github.com/ipfs/go-graphsync/responsemanager/hooks"
-	"github.com/ipfs/go-graphsync/responsemanager/queryexecutor"
-	"github.com/ipfs/go-graphsync/responsemanager/responseassembler"
-	"github.com/ipfs/go-graphsync/selectorvalidator"
-	"github.com/ipfs/go-graphsync/taskqueue"
 	logging "github.com/ipfs/go-log/v2"
-	"github.com/ipfs/go-peertaskqueue"
 	"github.com/ipld/go-ipld-prime"
-	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"sync"
-	"time"
 )
 
 var log = logging.Logger("pargraphsync")
 
-const maxRecursionDepth = 100
-const defaultTotalMaxMemory = uint64(256 << 20)
-const defaultMaxMemoryPerPeer = uint64(16 << 20)
-const defaultMaxInProgressRequests = uint64(6)
-const defaultMessageSendRetries = 10
-const defaultSendMessageTimeout = 10 * time.Minute
-
 // ParallelGraphSync is an instance of a ParallelGraphSync exchange that implements
 // the graphsync protocol.
 type ParallelGraphSync struct {
-	network                            gsnet.GraphSyncNetwork
-	linkSystem                         ipld.LinkSystem
-	requestManager                     *requestmanager.RequestManager
-	responseManager                    *responsemanager.ResponseManager
-	queryExecutor                      *queryexecutor.QueryExecutor
-	responseQueue                      taskqueue.TaskQueue
-	requestQueue                       taskqueue.TaskQueue
-	requestExecutor                    *executor.Executor
-	responseAssembler                  *responseassembler.ResponseAssembler
-	peerManager                        *peermanager.PeerMessageManager
-	incomingRequestQueuedHooks         *responderhooks.IncomingRequestQueuedHooks
-	incomingRequestHooks               *responderhooks.IncomingRequestHooks
-	outgoingBlockHooks                 *responderhooks.OutgoingBlockHooks
-	requestUpdatedHooks                *responderhooks.RequestUpdatedHooks
-	outgoingRequestProcessingListeners *listeners.OutgoingRequestProcessingListeners
-	completedResponseListeners         *listeners.CompletedResponseListeners
-	requestorCancelledListeners        *listeners.RequestorCancelledListeners
-	blockSentListeners                 *listeners.BlockSentListeners
-	networkErrorListeners              *listeners.NetworkErrorListeners
-	receiverErrorListeners             *listeners.NetworkReceiverErrorListeners
-	incomingResponseHooks              *requestorhooks.IncomingResponseHooks
-	outgoingRequestHooks               *requestorhooks.OutgoingRequestHooks
-	incomingBlockHooks                 *requestorhooks.IncomingBlockHooks
-	persistenceOptions                 *persistenceoptions.PersistenceOptions
-	ctx                                context.Context
-	cancel                             context.CancelFunc
-	responseAllocator                  *allocator.Allocator
+	network    gsnet.GraphSyncNetwork
+	linkSystem ipld.LinkSystem
+	ctx        context.Context
+	cancel     context.CancelFunc
+	graphsync  graphsync.GraphExchange
 
 	groupReqMgr *groupreq.GroupRequestManager
-}
-
-type graphsyncConfigOptions struct {
-	totalMaxMemoryResponder              uint64
-	maxMemoryPerPeerResponder            uint64
-	maxInProgressIncomingRequests        uint64
-	maxInProgressIncomingRequestsPerPeer uint64
-	maxInProgressOutgoingRequests        uint64
-	registerDefaultValidator             bool
-	maxLinksPerOutgoingRequest           uint64
-	maxLinksPerIncomingRequest           uint64
-	messageSendRetries                   int
-	sendMessageTimeout                   time.Duration
-	panicCallback                        panics.CallBackFn
-}
-
-// Option defines the functional option type that can be used to configure
-// graphsync instances
-type Option func(*graphsyncConfigOptions)
-
-// RejectAllRequestsByDefault means that without hooks registered
-// that perform their own request validation, all requests are rejected
-func RejectAllRequestsByDefault() Option {
-	return func(gs *graphsyncConfigOptions) {
-		gs.registerDefaultValidator = false
-	}
-}
-
-// MaxMemoryResponder defines the maximum amount of memory the responder
-// may consume queueing up messages for a response in total
-func MaxMemoryResponder(totalMaxMemory uint64) Option {
-	return func(gs *graphsyncConfigOptions) {
-		gs.totalMaxMemoryResponder = totalMaxMemory
-	}
-}
-
-// MaxMemoryPerPeerResponder defines the maximum amount of memory a peer
-// may consume queueing up messages for a response
-func MaxMemoryPerPeerResponder(maxMemoryPerPeer uint64) Option {
-	return func(gs *graphsyncConfigOptions) {
-		gs.maxMemoryPerPeerResponder = maxMemoryPerPeer
-	}
-}
-
-// MaxInProgressIncomingRequests changes the maximum number of
-// incoming graphsync requests that are processed in parallel (default 6)
-func MaxInProgressIncomingRequests(maxInProgressIncomingRequests uint64) Option {
-	return func(gs *graphsyncConfigOptions) {
-		gs.maxInProgressIncomingRequests = maxInProgressIncomingRequests
-	}
-}
-
-// MaxInProgressIncomingRequestsPerPeer changes the maximum number of
-// incoming graphsync requests that are processed in parallel on a per-peer basis.
-// The value is not set by default.
-// Useful in an environment for very high bandwidth graphsync responders serving
-// many peers
-// Note: if for some reason this is set higher than MaxInProgressIncomingRequests
-// it will simply have no effect.
-// Note: setting a value of zero will have no effect
-func MaxInProgressIncomingRequestsPerPeer(maxInProgressIncomingRequestsPerPeer uint64) Option {
-	return func(gs *graphsyncConfigOptions) {
-		gs.maxInProgressIncomingRequestsPerPeer = maxInProgressIncomingRequestsPerPeer
-	}
-}
-
-// MaxInProgressOutgoingRequests changes the maximum number of
-// outgoing graphsync requests that are processed in parallel (default 6)
-func MaxInProgressOutgoingRequests(maxInProgressOutgoingRequests uint64) Option {
-	return func(gs *graphsyncConfigOptions) {
-		gs.maxInProgressOutgoingRequests = maxInProgressOutgoingRequests
-	}
-}
-
-// MaxLinksPerOutgoingRequests changes the allowed number of links an outgoing
-// request can traverse before failing
-// A value of 0 = infinity, or no limit
-func MaxLinksPerOutgoingRequests(maxLinksPerOutgoingRequest uint64) Option {
-	return func(gs *graphsyncConfigOptions) {
-		gs.maxLinksPerOutgoingRequest = maxLinksPerOutgoingRequest
-	}
-}
-
-// MaxLinksPerIncomingRequests changes the allowed number of links an incoming
-// request can traverse before failing
-// A value of 0 = infinity, or no limit
-func MaxLinksPerIncomingRequests(maxLinksPerIncomingRequest uint64) Option {
-	return func(gs *graphsyncConfigOptions) {
-		gs.maxLinksPerIncomingRequest = maxLinksPerIncomingRequest
-	}
-}
-
-// s sets the number of times graphsync will send
-// attempt to send a message before giving up.
-// Lower to increase the speed at which an unresponsive peer is
-// detected.
-//
-// If not set, a default of 10 is used.
-func MessageSendRetries(messageSendRetries int) Option {
-	return func(gs *graphsyncConfigOptions) {
-		gs.messageSendRetries = messageSendRetries
-	}
-}
-
-// SendMessageTimeout sets the amount of time graphsync will wait
-// for a message to go across the wire before giving up and
-// trying again (up to max retries).
-// Lower to increase the speed at which an unresponsive peer is
-// detected.
-//
-// If not set, a default of 10 minutes is used.
-func SendMessageTimeout(sendMessageTimeout time.Duration) Option {
-	return func(gs *graphsyncConfigOptions) {
-		gs.sendMessageTimeout = sendMessageTimeout
-	}
-}
-
-// PanicCallback allows calling code to receive information about panics that
-// Graphsync recovers from. Graphsync recovers panics that occur during
-// per-request execution in order to keep the over all system running, although
-// they are still treated as standard errors in normal execution flow.
-func PanicCallback(callbackFn panics.CallBackFn) Option {
-	return func(gs *graphsyncConfigOptions) {
-		gs.panicCallback = callbackFn
-	}
 }
 
 // New creates a new GraphSync Exchange on the given network,
 // and the given link loader+storer.
 func New(parent context.Context, network gsnet.GraphSyncNetwork,
-	linkSystem ipld.LinkSystem, options ...Option) pargraphsync.ParallelGraphExchange {
+	linkSystem ipld.LinkSystem, options ...graphsyncImpl.Option) pargraphsync.ParallelGraphExchange {
 	ctx, cancel := context.WithCancel(parent)
 
-	gsConfig := &graphsyncConfigOptions{
-		totalMaxMemoryResponder:       defaultTotalMaxMemory,
-		maxMemoryPerPeerResponder:     defaultMaxMemoryPerPeer,
-		maxInProgressIncomingRequests: defaultMaxInProgressRequests,
-		maxInProgressOutgoingRequests: defaultMaxInProgressRequests,
-		registerDefaultValidator:      true,
-		messageSendRetries:            defaultMessageSendRetries,
-		sendMessageTimeout:            defaultSendMessageTimeout,
-		panicCallback:                 nil,
-	}
-	for _, option := range options {
-		option(gsConfig)
-	}
-	incomingResponseHooks := requestorhooks.NewResponseHooks()
-	outgoingRequestHooks := requestorhooks.NewRequestHooks()
-	incomingBlockHooks := requestorhooks.NewBlockHooks()
-	networkErrorListeners := listeners.NewNetworkErrorListeners()
-	receiverErrorListeners := listeners.NewReceiverNetworkErrorListeners()
-	outgoingRequestProcessingListeners := listeners.NewOutgoingRequestProcessingListeners()
-	persistenceOptions := persistenceoptions.New()
-	requestQueuedHooks := responderhooks.NewRequestQueuedHooks()
-	incomingRequestHooks := responderhooks.NewRequestHooks(persistenceOptions)
-	outgoingBlockHooks := responderhooks.NewBlockHooks()
-	requestUpdatedHooks := responderhooks.NewUpdateHooks()
-	completedResponseListeners := listeners.NewCompletedResponseListeners()
-	requestorCancelledListeners := listeners.NewRequestorCancelledListeners()
-	blockSentListeners := listeners.NewBlockSentListeners()
-	if gsConfig.registerDefaultValidator {
-		incomingRequestHooks.Register(selectorvalidator.SelectorValidator(maxRecursionDepth))
-	}
-	responseAllocator := allocator.NewAllocator(gsConfig.totalMaxMemoryResponder, gsConfig.maxMemoryPerPeerResponder)
-	createMessageQueue := func(ctx context.Context, p peer.ID) peermanager.PeerQueue {
-		return messagequeue.New(ctx, p, network, responseAllocator, gsConfig.messageSendRetries, gsConfig.sendMessageTimeout)
-	}
-	peerManager := peermanager.NewMessageManager(ctx, createMessageQueue)
-
-	requestQueue := taskqueue.NewTaskQueue(ctx)
-	requestManager := requestmanager.New(ctx, persistenceOptions, linkSystem, outgoingRequestHooks, incomingResponseHooks, networkErrorListeners, outgoingRequestProcessingListeners, requestQueue, network.ConnectionManager(), gsConfig.maxLinksPerOutgoingRequest, gsConfig.panicCallback)
-	requestExecutor := executor.NewExecutor(requestManager, incomingBlockHooks)
-	responseAssembler := responseassembler.New(ctx, peerManager)
-	var ptqopts []peertaskqueue.Option
-	if gsConfig.maxInProgressIncomingRequestsPerPeer > 0 {
-		ptqopts = append(ptqopts, peertaskqueue.MaxOutstandingWorkPerPeer(int(gsConfig.maxInProgressIncomingRequestsPerPeer)))
-	}
-	responseQueue := taskqueue.NewTaskQueue(ctx, ptqopts...)
-	responseManager := responsemanager.New(
-		ctx,
-		linkSystem,
-		responseAssembler,
-		requestQueuedHooks,
-		incomingRequestHooks,
-		requestUpdatedHooks,
-		completedResponseListeners,
-		requestorCancelledListeners,
-		blockSentListeners,
-		networkErrorListeners,
-		network.ConnectionManager(),
-		gsConfig.maxLinksPerIncomingRequest,
-		gsConfig.panicCallback,
-		responseQueue)
-	queryExecutor := queryexecutor.New(
-		ctx,
-		responseManager,
-		outgoingBlockHooks,
-		requestUpdatedHooks,
-	)
-	graphSync := &ParallelGraphSync{
-		network:                     network,
-		linkSystem:                  linkSystem,
-		requestManager:              requestManager,
-		responseManager:             responseManager,
-		queryExecutor:               queryExecutor,
-		responseQueue:               responseQueue,
-		requestQueue:                requestQueue,
-		requestExecutor:             requestExecutor,
-		responseAssembler:           responseAssembler,
-		peerManager:                 peerManager,
-		incomingRequestQueuedHooks:  requestQueuedHooks,
-		incomingRequestHooks:        incomingRequestHooks,
-		outgoingBlockHooks:          outgoingBlockHooks,
-		requestUpdatedHooks:         requestUpdatedHooks,
-		completedResponseListeners:  completedResponseListeners,
-		requestorCancelledListeners: requestorCancelledListeners,
-		blockSentListeners:          blockSentListeners,
-		networkErrorListeners:       networkErrorListeners,
-		receiverErrorListeners:      receiverErrorListeners,
-		incomingResponseHooks:       incomingResponseHooks,
-		outgoingRequestHooks:        outgoingRequestHooks,
-		incomingBlockHooks:          incomingBlockHooks,
-		persistenceOptions:          persistenceOptions,
-		ctx:                         ctx,
-		cancel:                      cancel,
-		responseAllocator:           responseAllocator,
-
+	impl := &ParallelGraphSync{
+		network:     network,
+		linkSystem:  linkSystem,
+		ctx:         ctx,
+		cancel:      cancel,
+		graphsync:   graphsyncImpl.New(parent, network, linkSystem, options...),
 		groupReqMgr: groupreq.NewGroupRequestManager(),
 	}
 
-	requestManager.SetDelegate(peerManager)
-	requestManager.Startup()
-	requestQueue.Startup(gsConfig.maxInProgressOutgoingRequests, requestExecutor)
-	responseManager.Startup()
-	responseQueue.Startup(gsConfig.maxInProgressIncomingRequests, queryExecutor)
-	network.SetDelegate((*graphSyncReceiver)(graphSync))
-
-	return graphSync
+	return impl
 }
 
 // Request initiates a new GraphSync request to the given peer using the given selector spec.
@@ -323,7 +56,7 @@ func (gs *ParallelGraphSync) Request(ctx context.Context, p peer.ID, root ipld.L
 		extNames = append(extNames, string(ext.Name))
 	}
 	ctx, _ = otel.Tracer("pragraphsync").Start(ctx, "request", trace.WithAttributes(
-		attribute.String("peerID", p.Pretty()),
+		attribute.String("peerID", p.String()),
 		attribute.String("root", root.String()),
 		attribute.StringSlice("extensions", extNames),
 	))
@@ -336,44 +69,18 @@ func (gs *ParallelGraphSync) Request(ctx context.Context, p peer.ID, root ipld.L
 	} else {
 		ctx = greq.GetContext()
 	}
-	return gs.requestManager.NewRequest(ctx, p, root, selector, extensions...)
+	return gs.graphsync.Request(ctx, p, root, selector, extensions...)
 }
 
-// RequestMany initiates some new GraphSync requests to the given peers of param group using the given selector spec.
-func (gs *ParallelGraphSync) RequestMany(ctx context.Context, reqParams []pargraphsync.RequestParam) (<-chan graphsync.ResponseProgress, <-chan error) {
+// RequestMany initiates some new GraphSync requests to the given peers using the given selector spec.
+func (gs *ParallelGraphSync) RequestMany(ctx context.Context, peers []peer.ID, root ipld.Link, selector ipld.Node, extensions ...graphsync.ExtensionData) (<-chan graphsync.ResponseProgress, <-chan error) {
 	greq := groupreq.NewGroupRequest(ctx)
 	if greq, loaded := gs.groupReqMgr.GetOrAdd(greq); !loaded {
 		ctx = greq.GetContext()
 	}
 
-	var wg sync.WaitGroup
-	returnedResponses := make(chan graphsync.ResponseProgress)
-	returnedErrors := make(chan error)
-	for _, param := range reqParams {
-		wg.Add(1)
-		go func(param pargraphsync.RequestParam) {
-			defer wg.Done()
-			resp, errs := gs.Request(ctx, param.PeerId, param.Root, param.Selector, param.Extensions...)
-			var wgResp sync.WaitGroup
-			wgResp.Add(1)
-			go func() {
-				defer wgResp.Done()
-				for e := range errs {
-					returnedErrors <- e
-				}
-			}()
-			for r := range resp {
-				returnedResponses <- r
-			}
-			wgResp.Wait()
-		}(param)
-	}
-	go func() {
-		wg.Wait()
-		close(returnedResponses)
-		close(returnedErrors)
-	}()
-	return returnedResponses, returnedErrors
+	rqManager := requestmanger.NewParGraphSyncRequestManger(gs, gs.ctx, peers, root, selector, extensions...)
+	return rqManager.Start(ctx)
 }
 
 // RegisterIncomingRequestHook adds a hook that runs when a request is received
@@ -381,80 +88,80 @@ func (gs *ParallelGraphSync) RequestMany(ctx context.Context, reqParams []pargra
 // it is considered to have "validated" the request -- and that validation supersedes
 // the normal validation of requests Graphsync does (i.e. all selectors can be accepted)
 func (gs *ParallelGraphSync) RegisterIncomingRequestHook(hook graphsync.OnIncomingRequestHook) graphsync.UnregisterHookFunc {
-	return gs.incomingRequestHooks.Register(hook)
-}
-
-// RegisterIncomingRequestQueuedHook adds a hook that runs when a new incoming request is added
-// to the responder's task queue.
-func (gs *ParallelGraphSync) RegisterIncomingRequestQueuedHook(hook graphsync.OnIncomingRequestQueuedHook) graphsync.UnregisterHookFunc {
-	return gs.incomingRequestQueuedHooks.Register(hook)
+	return gs.graphsync.RegisterIncomingRequestHook(hook)
 }
 
 // RegisterIncomingResponseHook adds a hook that runs when a response is received
 func (gs *ParallelGraphSync) RegisterIncomingResponseHook(hook graphsync.OnIncomingResponseHook) graphsync.UnregisterHookFunc {
-	return gs.incomingResponseHooks.Register(hook)
+	return gs.graphsync.RegisterIncomingResponseHook(hook)
 }
 
 // RegisterOutgoingRequestHook adds a hook that runs immediately prior to sending a new request
 func (gs *ParallelGraphSync) RegisterOutgoingRequestHook(hook graphsync.OnOutgoingRequestHook) graphsync.UnregisterHookFunc {
-	return gs.outgoingRequestHooks.Register(hook)
+	return gs.graphsync.RegisterOutgoingRequestHook(hook)
 }
 
 // RegisterPersistenceOption registers an alternate loader/storer combo that can be substituted for the default
 func (gs *ParallelGraphSync) RegisterPersistenceOption(name string, lsys ipld.LinkSystem) error {
-	return gs.persistenceOptions.Register(name, lsys)
+	return gs.graphsync.RegisterPersistenceOption(name, lsys)
 }
 
 // UnregisterPersistenceOption unregisters an alternate loader/storer combo
 func (gs *ParallelGraphSync) UnregisterPersistenceOption(name string) error {
-	return gs.persistenceOptions.Unregister(name)
+	return gs.graphsync.UnregisterPersistenceOption(name)
 }
 
 // RegisterOutgoingBlockHook registers a hook that runs after each block is sent in a response
 func (gs *ParallelGraphSync) RegisterOutgoingBlockHook(hook graphsync.OnOutgoingBlockHook) graphsync.UnregisterHookFunc {
-	return gs.outgoingBlockHooks.Register(hook)
+	return gs.graphsync.RegisterOutgoingBlockHook(hook)
 }
 
 // RegisterRequestUpdatedHook registers a hook that runs when an update to a request is received
 func (gs *ParallelGraphSync) RegisterRequestUpdatedHook(hook graphsync.OnRequestUpdatedHook) graphsync.UnregisterHookFunc {
-	return gs.requestUpdatedHooks.Register(hook)
+	return gs.graphsync.RegisterRequestUpdatedHook(hook)
 }
 
-// RegisterOutgoingRequestProcessingListener adds a listener that gets called when a request actually begins processing (reaches
+// RegisterOutgoingRequestProcessingListener adds a listener that gets called when an outgoing request actually begins processing (reaches
 // the top of the outgoing request queue)
-func (gs *ParallelGraphSync) RegisterOutgoingRequestProcessingListener(listener graphsync.OnOutgoingRequestProcessingListener) graphsync.UnregisterHookFunc {
-	return gs.outgoingRequestProcessingListeners.Register(listener)
+func (gs *ParallelGraphSync) RegisterOutgoingRequestProcessingListener(listener graphsync.OnRequestProcessingListener) graphsync.UnregisterHookFunc {
+	return gs.graphsync.RegisterOutgoingRequestProcessingListener(listener)
+}
+
+// RegisterOutgoingRequestProcessingListener adds a listener that gets called when an incoming request actually begins processing (reaches
+// the top of the outgoing request queue)
+func (gs *ParallelGraphSync) RegisterIncomingRequestProcessingListener(listener graphsync.OnRequestProcessingListener) graphsync.UnregisterHookFunc {
+	return gs.graphsync.RegisterIncomingRequestProcessingListener(listener)
 }
 
 // RegisterCompletedResponseListener adds a listener on the responder for completed responses
 func (gs *ParallelGraphSync) RegisterCompletedResponseListener(listener graphsync.OnResponseCompletedListener) graphsync.UnregisterHookFunc {
-	return gs.completedResponseListeners.Register(listener)
+	return gs.graphsync.RegisterCompletedResponseListener(listener)
 }
 
 // RegisterIncomingBlockHook adds a hook that runs when a block is received and validated (put in block store)
 func (gs *ParallelGraphSync) RegisterIncomingBlockHook(hook graphsync.OnIncomingBlockHook) graphsync.UnregisterHookFunc {
-	return gs.incomingBlockHooks.Register(hook)
+	return gs.graphsync.RegisterIncomingBlockHook(hook)
 }
 
 // RegisterRequestorCancelledListener adds a listener on the responder for
 // responses cancelled by the requestor
 func (gs *ParallelGraphSync) RegisterRequestorCancelledListener(listener graphsync.OnRequestorCancelledListener) graphsync.UnregisterHookFunc {
-	return gs.requestorCancelledListeners.Register(listener)
+	return gs.graphsync.RegisterRequestorCancelledListener(listener)
 }
 
 // RegisterBlockSentListener adds a listener for when blocks are actually sent over the wire
 func (gs *ParallelGraphSync) RegisterBlockSentListener(listener graphsync.OnBlockSentListener) graphsync.UnregisterHookFunc {
-	return gs.blockSentListeners.Register(listener)
+	return gs.graphsync.RegisterBlockSentListener(listener)
 }
 
 // RegisterNetworkErrorListener adds a listener for when errors occur sending data over the wire
 func (gs *ParallelGraphSync) RegisterNetworkErrorListener(listener graphsync.OnNetworkErrorListener) graphsync.UnregisterHookFunc {
-	return gs.networkErrorListeners.Register(listener)
+	return gs.graphsync.RegisterNetworkErrorListener(listener)
 }
 
 // RegisterReceiverNetworkErrorListener adds a listener for when errors occur receiving data over the wire
 func (gs *ParallelGraphSync) RegisterReceiverNetworkErrorListener(listener graphsync.OnReceiverNetworkErrorListener) graphsync.UnregisterHookFunc {
-	return gs.receiverErrorListeners.Register(listener)
+	return gs.graphsync.RegisterReceiverNetworkErrorListener(listener)
 }
 
 // Pause pauses an in progress request or response
@@ -466,21 +173,10 @@ func (gs *ParallelGraphSync) Pause(ctx context.Context, groupRequestID graphsync
 	var reqNotFound graphsync.RequestNotFoundErr
 	var err error
 	groupReq.RangeSubRequests(func(subReqId graphsync.RequestID, subReq *pargraphsync.SubRequest) bool {
-		if err = gs.requestManager.PauseRequest(ctx, subReqId); !errors.As(err, &reqNotFound) {
-			if err == nil {
-				// if invoke requestManager.PauseRequest success, then continue the next
-				return true
-			} else {
-				// otherwise, interrupt the next operation
-				return false
-			}
+		if errSub := gs.graphsync.Pause(ctx, subReqId); !errors.As(errSub, &reqNotFound) && err != nil {
+			err = errSub
 		}
-		// if request not found in RequestManager, then invoke responseManager.PauseResponse
-		err = gs.responseManager.PauseResponse(ctx, subReqId)
-		if errors.As(err, &reqNotFound) || err == nil {
-			return true
-		}
-		return false
+		return true
 	})
 	return err
 }
@@ -495,21 +191,10 @@ func (gs *ParallelGraphSync) Unpause(ctx context.Context, groupRequestID graphsy
 	var reqNotFound graphsync.RequestNotFoundErr
 	var err error
 	groupReq.RangeSubRequests(func(subReqId graphsync.RequestID, subReq *pargraphsync.SubRequest) bool {
-		if err = gs.requestManager.UnpauseRequest(ctx, subReqId, extensions...); !errors.As(err, &reqNotFound) {
-			if err == nil {
-				// if invoke requestManager.UnpauseRequest success, then continue the next
-				return true
-			} else {
-				// otherwise, interrupt the next operation
-				return false
-			}
+		if errSub := gs.graphsync.Unpause(ctx, subReqId, extensions...); !errors.As(errSub, &reqNotFound) && err != nil {
+			err = errSub
 		}
-		// if request not found in RequestManager, then invoke responseManager.UnpauseResponse
-		err = gs.responseManager.UnpauseResponse(ctx, subReqId, extensions...)
-		if errors.As(err, &reqNotFound) || err == nil {
-			return true
-		}
-		return false
+		return true
 	})
 	return err
 }
@@ -523,21 +208,10 @@ func (gs *ParallelGraphSync) Cancel(ctx context.Context, groupRequestID graphsyn
 	var reqNotFound graphsync.RequestNotFoundErr
 	var err error
 	groupReq.RangeSubRequests(func(subReqId graphsync.RequestID, subReq *pargraphsync.SubRequest) bool {
-		if err = gs.requestManager.CancelRequest(ctx, subReqId); !errors.As(err, &reqNotFound) {
-			if err == nil {
-				// if invoke requestManager.CancelRequest success, then continue the next
-				return true
-			} else {
-				// otherwise, interrupt the next operation
-				return false
-			}
+		if errSub := gs.graphsync.Cancel(ctx, subReqId); !errors.As(errSub, &reqNotFound) && err != nil {
+			err = errSub
 		}
-		// if request not found in RequestManager, then invoke responseManager.CancelResponse
-		err = gs.responseManager.CancelResponse(ctx, subReqId)
-		if errors.As(err, &reqNotFound) || err == nil {
-			return true
-		}
-		return false
+		return true
 	})
 	return err
 }
@@ -551,96 +225,24 @@ func (gs *ParallelGraphSync) SendUpdate(ctx context.Context, groupRequestID grap
 	var reqNotFound graphsync.RequestNotFoundErr
 	var err error
 	groupReq.RangeSubRequests(func(subReqId graphsync.RequestID, subReq *pargraphsync.SubRequest) bool {
-		if err = gs.requestManager.UpdateRequest(ctx, subReqId, extensions...); !errors.As(err, &reqNotFound) {
-			if err == nil {
-				// if invoke requestManager.UpdateRequest success, then continue the next
-				return true
-			} else {
-				// otherwise, interrupt the next operation
-				return false
-			}
+		if errSub := gs.graphsync.SendUpdate(ctx, subReqId, extensions...); !errors.As(errSub, &reqNotFound) && err != nil {
+			err = errSub
 		}
-		// if request not found in RequestManager, then invoke responseManager.UpdateResponse
-		err = gs.responseManager.UpdateResponse(ctx, subReqId, extensions...)
-		if errors.As(err, &reqNotFound) || err == nil {
-			return true
-		}
-		return false
+		return true
 	})
 	return err
 }
 
 // Stats produces insight on the current state of a graphsync exchange
 func (gs *ParallelGraphSync) Stats() graphsync.Stats {
-	outgoingRequestStats := gs.requestQueue.Stats()
-	incomingRequestStats := gs.responseQueue.Stats()
-	outgoingResponseStats := gs.responseAllocator.Stats()
-
-	return graphsync.Stats{
-		OutgoingRequests:  outgoingRequestStats,
-		IncomingRequests:  incomingRequestStats,
-		OutgoingResponses: outgoingResponseStats,
-	}
-}
-
-// PeerState describes the state of graphsync for a given peer
-type PeerState struct {
-	OutgoingState peerstate.PeerState
-	IncomingState peerstate.PeerState
-}
-
-// PeerState produces insight on the current state of a given peer
-func (gs *ParallelGraphSync) PeerState(p peer.ID) PeerState {
-	return PeerState{
-		OutgoingState: gs.requestManager.PeerState(p),
-		IncomingState: gs.responseManager.PeerState(p),
-	}
+	return gs.graphsync.Stats()
 }
 
 func (gs *ParallelGraphSync) GetGroupRequestBySubRequestId(subRequestID graphsync.RequestID) pargraphsync.GroupRequest {
 	return gs.groupReqMgr.GetBySubRequestId(subRequestID)
 }
 
-type graphSyncReceiver ParallelGraphSync
-
-func (gsr *graphSyncReceiver) graphSync() *ParallelGraphSync {
-	return (*ParallelGraphSync)(gsr)
-}
-
-// ReceiveMessage is part of the networks Receiver interface and receives
-// incoming messages from the network
-func (gsr *graphSyncReceiver) ReceiveMessage(
-	ctx context.Context,
-	sender peer.ID,
-	incoming gsmsg.GraphSyncMessage) {
-
-	requests := incoming.Requests()
-	responses := incoming.Responses()
-	blocks := incoming.Blocks()
-
-	if len(requests) > 0 {
-		gsr.graphSync().responseManager.ProcessRequests(ctx, sender, requests)
-	}
-	if len(responses) > 0 || len(blocks) > 0 {
-		gsr.graphSync().requestManager.ProcessResponses(sender, responses, blocks)
-	}
-}
-
-// ReceiveError is part of the network's Receiver interface and handles incoming
-// errors from the network.
-func (gsr *graphSyncReceiver) ReceiveError(p peer.ID, err error) {
-	log.Infof("Graphsync ReceiveError from %s: %s", p, err)
-	gsr.receiverErrorListeners.NotifyNetworkErrorListeners(p, err)
-}
-
-// Connected is part of the networks 's Receiver interface and handles peers connecting
-// on the network
-func (gsr *graphSyncReceiver) Connected(p peer.ID) {
-	gsr.graphSync().peerManager.Connected(p)
-}
-
-// Connected is part of the networks 's Receiver interface and handles peers connecting
-// on the network
-func (gsr *graphSyncReceiver) Disconnected(p peer.ID) {
-	gsr.graphSync().peerManager.Disconnected(p)
+// CancelSubRequest cancels an in progress sub request or response
+func (gs *ParallelGraphSync) CancelSubRequest(ctx context.Context, subRequestID graphsync.RequestID) error {
+	return gs.graphsync.Cancel(ctx, subRequestID)
 }

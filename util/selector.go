@@ -35,19 +35,43 @@ func GenerateDataSelectorSpec(dpsPath string, matchPath bool, optionalSubSel bui
 	return selspec, nil
 }
 
-func GenerateSubRangeSelectorSpec(selPath string, start, end int64) (builder.SelectorSpec, error) {
+func GenerateSubRangeSelectorSpec(selPath string, matchPath bool, start, end int64, optionalSubSel builder.SelectorSpec) (builder.SelectorSpec, error) {
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	subselAtTarget := ssb.ExploreRecursive(
+		selector.RecursionLimitNone(),
+		ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())),
+	)
+	if optionalSubSel != nil {
+		subselAtTarget = optionalSubSel
+	}
 	subsel := ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
-		specBuilder.Insert("Links", ssb.ExploreRange(start, end,
-			ssb.ExploreRecursive(selector.RecursionLimitNone(),
-				ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
-		))
+		specBuilder.Insert("Links", ssb.ExploreRange(start, end, subselAtTarget))
 	})
-	return GenerateDataSelectorSpec(selPath, false, subsel)
+	return GenerateDataSelectorSpec(selPath, matchPath, subsel)
 }
 
-func GenerateSubRangeSelector(selPath string, start, end int64) (datamodel.Node, error) {
-	selSpec, err := GenerateSubRangeSelectorSpec(selPath, start, end)
+func GenerateSubRangeSelector(selPath string, matchPath bool, start, end int64, optionalSubSel builder.SelectorSpec) (datamodel.Node, error) {
+	selSpec, err := GenerateSubRangeSelectorSpec(selPath, matchPath, start, end, optionalSubSel)
+	if err != nil {
+		return nil, err
+	}
+	return selSpec.Node(), nil
+}
+
+func GenerateLeftSubRangeSelector(selPath string, start, end int64) (datamodel.Node, error) {
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	subsel := ssb.ExploreRecursive(selector.RecursionLimitNone(),
+		ssb.ExploreUnion(
+			ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+				specBuilder.Insert("Links", ssb.ExploreIndex(0,
+					ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))),
+				)
+			}),
+			ssb.ExploreFields(func(specBuilder builder.ExploreFieldsSpecBuilder) {
+				specBuilder.Insert("Hash", ssb.ExploreUnion(ssb.Matcher(), ssb.ExploreAll(ssb.ExploreRecursiveEdge())))
+			}),
+		))
+	selSpec, err := GenerateSubRangeSelectorSpec(selPath, true, start, end, subsel)
 	if err != nil {
 		return nil, err
 	}
@@ -126,4 +150,36 @@ func UnixFSPathSelectorNotRecursive(path string) builder.SelectorSpec {
 		)
 	}
 	return selectorSoFar
+}
+
+func IsAllSelector(sel ipld.Node) bool {
+	var selBuilder strings.Builder
+	var allBuilder strings.Builder
+	dagjson.Encode(sel, &selBuilder)
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	allSel := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
+	dagjson.Encode(allSel.Node(), &allBuilder)
+	if selBuilder.String() == allBuilder.String() {
+		return true
+	}
+	return false
+}
+
+func RootLeftSelector(path string) (ipld.Node, error) {
+	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
+	selSpec, err := textselector.SelectorSpecFromPath(LeftLinks, true, ssb.ExploreRecursiveEdge())
+	if err != nil {
+		return nil, err
+	}
+	fromPath, err := textselector.SelectorSpecFromPath(textselector.Expression(path), true, ssb.ExploreRecursive(selector.RecursionLimitNone(), selSpec))
+	if err != nil {
+		return nil, err
+	}
+	return ssb.ExploreUnion(ssb.Matcher(), fromPath).Node(), nil
+}
+
+func SelectorToJson(sel ipld.Node) string {
+	var selBuilder strings.Builder
+	dagjson.Encode(sel, &selBuilder)
+	return selBuilder.String()
 }

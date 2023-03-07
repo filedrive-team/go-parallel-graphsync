@@ -12,6 +12,8 @@ import (
 	"strings"
 )
 
+var NotSupportError = errors.New("not support")
+
 type ERParseContext struct {
 	origin              selector.ParseContext
 	pathSegments        []string
@@ -27,8 +29,6 @@ type ParsedSelectors struct {
 }
 
 // ParseSelector creates a Selector from an IPLD Selector Node with the given context
-//todo Maybe there is a logical problem, and the recursive call will transfer to the method of IPLD prime,
-//todo but there is no problem trying to build a selector that meets the requirements, maybe it will be fixed in the future when problems arise
 func (er *ERParseContext) ParseSelector(n datamodel.Node) (selector.Selector, error) {
 	if n.Kind() != datamodel.Kind_Map {
 		return nil, fmt.Errorf("selector spec parse rejected: selector is a keyed union and thus must be a map")
@@ -87,7 +87,7 @@ func (er *ERParseContext) collectPath(erc ExplorePathContext) {
 			} else if strings.HasSuffix(paths[0].Path, "Hash") {
 				er.explorePathContexts = append(er.explorePathContexts, erc)
 			} else {
-				fmt.Println(erc.Get())
+				//fmt.Println(erc.Get())
 			}
 		}
 	}
@@ -150,7 +150,7 @@ func GenerateSelectors(sel ipld.Node) (selectors []ParsedSelectors, err error) {
 	}
 	for _, ec := range er.explorePathContexts {
 		if ec.NotSupport() {
-			return nil, errors.New("not support")
+			return nil, NotSupportError
 		}
 		paths := ec.Get()
 		for _, ep := range paths {

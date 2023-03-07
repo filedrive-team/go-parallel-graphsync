@@ -215,6 +215,7 @@ func (er *ERParseContext) ParseExploreRecursive(n datamodel.Node) (selector.Sele
 	er.collectPath(expPath)
 
 	// todo need check if same, ??? I don't quite understand what that means.
+	// path "Links/0/Hash" already exist but we got path "Links/0/Hash/Links/0/Hash",do we need to delete "Links/0/Hash", for avoiding taking multiple times,
 	er.explorePathContexts = append(er.explorePathContexts, tmp.explorePathContexts...)
 
 	var stopCondition *selector.Condition
