@@ -69,7 +69,6 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("requester peerId=%s\n", globalHost.ID())
 
 	globalParExchange.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
 		fmt.Printf("RegisterIncomingBlockHook peer=%s block index=%d, size=%d link=%s\n", p.String(), blockData.Index(), blockData.BlockSize(), blockData.Link().String())
