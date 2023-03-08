@@ -19,6 +19,7 @@ import (
 	offline "github.com/ipfs/go-ipfs-exchange-offline"
 	files "github.com/ipfs/go-ipfs-files"
 	ipldformat "github.com/ipfs/go-ipld-format"
+	logging "github.com/ipfs/go-log/v2"
 	"github.com/ipfs/go-merkledag"
 	"github.com/ipfs/go-unixfs"
 	unixfile "github.com/ipfs/go-unixfs/file"
@@ -103,6 +104,7 @@ func TestParallelGraphSync(t *testing.T) {
 
 func TestParallelGraphSync2(t *testing.T) {
 	//logging.SetLogLevel("parrequestmanger", "Debug")
+	logging.SetLogLevel("pgmanager", "Debug")
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 	const ServicesNum = 3
