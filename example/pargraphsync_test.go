@@ -560,7 +560,7 @@ func BenchmarkGraphSync(b *testing.B) {
 	//logging.SetLogLevel("parrequestmanger", "Debug")
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
-	const ServicesNum = 3
+	const ServicesNum = 5
 	servbs, rootCid := CreateRandomBytesBlockStore(mainCtx, 290*1024*1024)
 	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9110, servbs, false)
 	if err != nil {
@@ -602,7 +602,7 @@ func BenchmarkGraphSync(b *testing.B) {
 	ssb := builder.NewSelectorSpecBuilder(basicnode.Prototype.Any)
 	all := ssb.ExploreRecursive(selector.RecursionLimitNone(), ssb.ExploreAll(ssb.ExploreRecursiveEdge()))
 
-	b.Run("Parallel-Graphsync request to 3 services", func(b *testing.B) {
+	b.Run("Parallel-Graphsync request to 5 services", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			b.StopTimer()
@@ -617,6 +617,33 @@ func BenchmarkGraphSync(b *testing.B) {
 
 			ctx := context.Background()
 			responseProgress, errors := gscli.RequestMany(ctx, peerIds, cidlink.Link{rootCid}, all.Node())
+			go func() {
+				select {
+				case err := <-errors:
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+			}()
+			for range responseProgress {
+			}
+		}
+	})
+	b.Run("Parallel-Graphsync request to 3 services", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			b.StopTimer()
+			gscli.UnregisterPersistenceOption("newLinkSys")
+			memds := datastore.NewMapDatastore()
+			membs := blockstore.NewBlockstore(dssync.MutexWrap(memds))
+			newlsys := storeutil.LinkSystemForBlockstore(membs)
+			if err := gscli.RegisterPersistenceOption("newLinkSys", newlsys); err != nil {
+				b.Fatal(err)
+			}
+			b.StartTimer()
+
+			ctx := context.Background()
+			responseProgress, errors := gscli.RequestMany(ctx, peerIds[:3], cidlink.Link{rootCid}, all.Node())
 			go func() {
 				select {
 				case err := <-errors:
