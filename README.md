@@ -142,10 +142,18 @@ goarch: amd64
 pkg: github.com/filedrive-team/go-parallel-graphsync/example
 cpu: Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz
 BenchmarkGraphSync
+BenchmarkGraphSync/Parallel-Graphsync_request_to_2_services
+BenchmarkGraphSync/Parallel-Graphsync_request_to_2_services-12                20         390876203 ns/op        938268084 B/op    175393 allocs/op
 BenchmarkGraphSync/Parallel-Graphsync_request_to_3_services
-BenchmarkGraphSync/Parallel-Graphsync_request_to_3_services-12                20         339754734 ns/op        938274530 B/op    182571 allocs/op
+BenchmarkGraphSync/Parallel-Graphsync_request_to_3_services-12                20         325782454 ns/op        938266822 B/op    185398 allocs/op
+BenchmarkGraphSync/Parallel-Graphsync_request_to_4_services
+BenchmarkGraphSync/Parallel-Graphsync_request_to_4_services-12                20         298436154 ns/op        938784545 B/op    191882 allocs/op
+BenchmarkGraphSync/Parallel-Graphsync_request_to_5_services
+BenchmarkGraphSync/Parallel-Graphsync_request_to_5_services-12                20         275989534 ns/op        939239594 B/op    201498 allocs/op
+BenchmarkGraphSync/Parallel-Graphsync_request_to_6_services
+BenchmarkGraphSync/Parallel-Graphsync_request_to_6_services-12                20         275903957 ns/op        939730288 B/op    212451 allocs/op
 BenchmarkGraphSync/Graphsync_request_to_1_service
-BenchmarkGraphSync/Graphsync_request_to_1_service-12                          20         520008977 ns/op        932649795 B/op    164291 allocs/op
+BenchmarkGraphSync/Graphsync_request_to_1_service-12                          20         544641223 ns/op        932732274 B/op    166017 allocs/op
 PASS
-ok      github.com/filedrive-team/go-parallel-graphsync/example 19.522s
+ok      github.com/filedrive-team/go-parallel-graphsync/example 45.814s
 ```

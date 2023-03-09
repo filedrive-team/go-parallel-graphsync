@@ -61,12 +61,20 @@ func NewPeerGroupManager(peers []peer.ID) *PeerGroupManager {
 
 func (pm *PeerGroupManager) UpdateSpeed(peerId peer.ID, transformSpeed int64) {
 	log.Debugf("metrics peerid: %v speed: %v KB/s", peerId, transformSpeed/1024)
-	pm.peers[peerId].speed = transformSpeed
+	if info, ok := pm.peers[peerId]; ok {
+		info.speed = transformSpeed
+	} else {
+		log.Errorf("metrics UpdateSpeed peerid: %v not exist", peerId)
+	}
 }
 
 func (pm *PeerGroupManager) UpdateTTFB(peerId peer.ID, ttfb int64) {
 	log.Debugf("metrics peerid: %v ttfb: %v ms", peerId, ttfb)
-	pm.peers[peerId].ttfb = ttfb
+	if info, ok := pm.peers[peerId]; ok {
+		info.ttfb = ttfb
+	} else {
+		log.Errorf("metrics UpdateTTFB peerid: %v not exist", peerId)
+	}
 }
 
 func (pm *PeerGroupManager) LockPeer(peerId peer.ID) bool {
