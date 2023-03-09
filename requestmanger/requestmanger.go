@@ -45,6 +45,8 @@ type ParallelRequestManger struct {
 
 	returnedResponses chan graphsync.ResponseProgress
 	returnedErrors    chan error
+
+	unregisterHookFuncs []graphsync.UnregisterHookFunc
 }
 
 func NewParGraphSyncRequestManger(exchange pargraphsync.ParallelGraphExchange, parent context.Context, peers []peer.ID,
@@ -94,10 +96,10 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 		}
 	}
 
-	m.exchange.RegisterNetworkErrorListener(func(p peer.ID, request graphsync.RequestData, err error) {
+	m.unregisterHookFuncs = append(m.unregisterHookFuncs, m.exchange.RegisterNetworkErrorListener(func(p peer.ID, request graphsync.RequestData, err error) {
 		log.Infof("NetworkErrorListener peer=%s request requestId=%s error=%v", p.String(), request.ID().String(), err)
 		m.exchange.CancelSubRequest(ctx, request.ID())
-	})
+	}))
 	m.RegisterCollectSpeedInfo(ctx)
 
 	go func() {
@@ -430,6 +432,9 @@ func (m *ParallelRequestManger) close() {
 	close(m.returnedResponses)
 	close(m.requestChan)
 	m.pgManager.Close()
+	for _, hook := range m.unregisterHookFuncs {
+		hook()
+	}
 }
 
 func (m *ParallelRequestManger) dividePaths(ctx context.Context, paths []string) []subRequest {
@@ -481,7 +486,7 @@ func (m *ParallelRequestManger) RegisterCollectSpeedInfo(ctx context.Context) {
 	}
 	taskQueue := make(chan task, 1000)
 
-	m.exchange.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
+	m.unregisterHookFuncs = append(m.unregisterHookFuncs, m.exchange.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
 		select {
 		case taskQueue <- task{
 			init: true,
@@ -492,8 +497,8 @@ func (m *ParallelRequestManger) RegisterCollectSpeedInfo(ctx context.Context) {
 		case <-ctx.Done():
 		}
 
-	})
-	m.exchange.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData,
+	}))
+	m.unregisterHookFuncs = append(m.unregisterHookFuncs, m.exchange.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData,
 		hookActions graphsync.IncomingBlockHookActions) {
 		select {
 		case taskQueue <- task{
@@ -506,7 +511,7 @@ func (m *ParallelRequestManger) RegisterCollectSpeedInfo(ctx context.Context) {
 		}:
 		case <-ctx.Done():
 		}
-	})
+	}))
 
 	go func() {
 		metricsMap := make(map[graphsync.RequestID]*metrics)
