@@ -2,6 +2,7 @@ package pgmanager
 
 import (
 	"context"
+	"fmt"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"go.uber.org/atomic"
@@ -17,10 +18,15 @@ type PeerGroupManager struct {
 }
 
 type PeerInfo struct {
-	peer  peer.ID
-	idle  atomic.Bool
-	ttfb  int64 // ms
-	speed int64 // B/s
+	peer   peer.ID
+	idle   atomic.Bool
+	ttfb   int64 // ms
+	speed  int64 // B/s
+	reqNum int64 // request number
+}
+
+func (pi PeerInfo) String() string {
+	return fmt.Sprintf("peer: %s idle: %s ttfb: %v ms speed: %v KB/s reqNum: %d", pi.peer, pi.idle.String(), pi.ttfb, pi.speed/1024, pi.reqNum)
 }
 
 type PeerInfos []*PeerInfo
@@ -113,6 +119,7 @@ func (pm *PeerGroupManager) getIdlePeers(top int) []peer.ID {
 	sort.Sort(pm.cache)
 	for _, p := range pm.cache {
 		if pm.LockPeer(p.peer) {
+			p.reqNum += 1
 			resList = append(resList, p.peer)
 			if len(resList) == top {
 				return resList
