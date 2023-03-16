@@ -13,7 +13,6 @@ import (
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/ipld/go-ipld-prime"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"math"
 	"strings"
 	"sync"
 	"time"
@@ -293,6 +292,10 @@ func (m *ParallelRequestManger) syncSubtree(ctx context.Context, p peer.ID, requ
 				path := blk.Path.String()
 				links := nd.Length()
 				peers := int64(m.pgManager.GetPeerCount())
+				// If there are too many tasks to be processed, they are not evenly divided to quickly reduce the number of requests
+				if len(m.requestChan) > int(2*peers) {
+					peers = 1
+				}
 				requests := make([]subRequest, 0, peers)
 				usedLinks := int64(0)
 				for index := int64(0); index < peers; index++ {
@@ -352,11 +355,15 @@ func (m *ParallelRequestManger) handleRequest(ctx context.Context) {
 	defer func() {
 		go func() {
 			// remove unnecessary exit signals
-			for _ = range exitCh {
+			for range exitCh {
 			}
 		}()
 		wg.Wait()
 		close(exitCh)
+		pis := m.pgManager.GetPeerInfoList()
+		for _, pi := range pis {
+			log.Debug(pi.String())
+		}
 	}()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -369,8 +376,6 @@ func (m *ParallelRequestManger) handleRequest(ctx context.Context) {
 				// exit
 				return
 			}
-			// TODO: merge multiple existing requests based on the number of idle peers
-			// len(m.requestChan)
 			for i, p := range peers {
 				wg.Add(1)
 				go func(index int, id peer.ID) {
@@ -417,6 +422,58 @@ func (m *ParallelRequestManger) pushSubRequest(ctx context.Context, reqs []subRe
 	}
 }
 
+// The actual testing of merge requests is not ideal
+func (m *ParallelRequestManger) mergeSubRequest(request []subRequest) []subRequest {
+	log.Infof("before merging, request length: %v", len(request))
+	defer func() {
+		log.Infof("after merging, request length: %v", len(request))
+	}()
+	newRequests := make([]subRequest, 0, len(request))
+	subReqs := make([]subRequest, 0, 8)
+	for _, subReq := range request {
+		if subReq.Path != "" {
+			subReqs = append(subReqs, subReq)
+		} else {
+			newRequests = append(newRequests, subReq)
+		}
+	}
+	if len(subReqs) > 1 {
+		remain := len(request) - len(subReqs)
+		if remain >= m.pgManager.GetPeerCount()-1 {
+			// merge multiple existing requests based on the number of idle peers
+			subReqMap := make(map[string][]subRequest)
+			for _, r := range subReqs {
+				if item, ok := subReqMap[r.Root.String()]; ok {
+					item = append(item, r)
+					subReqMap[r.Root.String()] = item
+				} else {
+					subReqMap[r.Root.String()] = []subRequest{r}
+				}
+			}
+			for _, reqs := range subReqMap {
+				paths := make([]string, 0, len(reqs))
+				for _, req := range reqs {
+					paths = append(paths, req.Path)
+				}
+				sel, err := util.UnionPathSelector(paths, true)
+				if err != nil {
+					log.Debugf("UnionPathSelector error: %v", err)
+					newRequests = append(newRequests, reqs...)
+				} else {
+					log.Debugf("merged request selector: %s", util.SelectorToJson(sel))
+					newRequests = append(newRequests, subRequest{
+						Root:       reqs[0].Root,
+						Selector:   sel,
+						Extensions: reqs[0].Extensions,
+					})
+				}
+			}
+			request = newRequests
+		}
+	}
+	return request
+}
+
 func generateKey(root ipld.Link, sel ipld.Node) string {
 	var s strings.Builder
 	s.WriteString(root.String())
@@ -437,38 +494,6 @@ func (m *ParallelRequestManger) close() {
 	}
 }
 
-func (m *ParallelRequestManger) dividePaths(ctx context.Context, paths []string) []subRequest {
-	ave := Ceil(len(paths), m.pgManager.GetPeerCount())
-	var start, end = 0, 0
-	num := m.pgManager.GetPeerCount()
-	if num > len(paths) {
-		num = len(paths)
-	}
-	var requests []subRequest
-	for i := 0; i < num; i++ {
-		end = start + ave
-		if i == num-1 {
-			end = len(paths)
-		}
-		sel, err := util.UnionPathSelector(paths[start:end], true)
-		// continue or return
-		if err != nil {
-			m.returnedErrors <- err
-		}
-		requests = append(requests, subRequest{
-			Root:       m.rootCid,
-			Selector:   sel,
-			Extensions: m.extensions,
-		})
-		start = end
-	}
-	return requests
-}
-
-func Ceil(x, y int) int {
-	return int(math.Ceil(float64(x) / float64(y)))
-}
-
 func (m *ParallelRequestManger) RegisterCollectSpeedInfo(ctx context.Context) {
 	type metrics struct {
 		start int64  // ms
@@ -486,32 +511,35 @@ func (m *ParallelRequestManger) RegisterCollectSpeedInfo(ctx context.Context) {
 	}
 	taskQueue := make(chan task, 1000)
 
-	m.unregisterHookFuncs = append(m.unregisterHookFuncs, m.exchange.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
-		select {
-		case taskQueue <- task{
-			init: true,
-			pid:  p,
-			rid:  request.ID(),
-			now:  time.Now().UnixMilli(),
-		}:
-		case <-ctx.Done():
-		}
+	m.unregisterHookFuncs = append(m.unregisterHookFuncs,
+		m.exchange.RegisterOutgoingRequestHook(
+			func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
+				select {
+				case taskQueue <- task{
+					init: true,
+					pid:  p,
+					rid:  request.ID(),
+					now:  time.Now().UnixMilli(),
+				}:
+				case <-ctx.Done():
+				}
 
-	}))
-	m.unregisterHookFuncs = append(m.unregisterHookFuncs, m.exchange.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData,
-		hookActions graphsync.IncomingBlockHookActions) {
-		select {
-		case taskQueue <- task{
-			init:   false,
-			pid:    p,
-			rid:    responseData.RequestID(),
-			now:    time.Now().UnixMilli(),
-			size:   blockData.BlockSize(),
-			status: responseData.Status(),
-		}:
-		case <-ctx.Done():
-		}
-	}))
+			}))
+	m.unregisterHookFuncs = append(m.unregisterHookFuncs,
+		m.exchange.RegisterIncomingBlockHook(
+			func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
+				select {
+				case taskQueue <- task{
+					init:   false,
+					pid:    p,
+					rid:    responseData.RequestID(),
+					now:    time.Now().UnixMilli(),
+					size:   blockData.BlockSize(),
+					status: responseData.Status(),
+				}:
+				case <-ctx.Done():
+				}
+			}))
 
 	go func() {
 		metricsMap := make(map[graphsync.RequestID]*metrics)
