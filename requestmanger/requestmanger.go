@@ -87,6 +87,7 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 		if util.IsAllSelector(m.selector) {
 			isAllSel = true
 		} else {
+			defer m.close()
 			peerId := m.pgManager.WaitIdlePeers(ctx, 1)
 			if len(peerId) == 0 {
 				return m.singleErrorResponse(errors.New("no idle peer"))
@@ -95,15 +96,17 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 		}
 	}
 
+	ctxInternal, cancel := context.WithCancel(ctx)
 	m.unregisterHookFuncs = append(m.unregisterHookFuncs, m.exchange.RegisterNetworkErrorListener(func(p peer.ID, request graphsync.RequestData, err error) {
 		log.Infof("NetworkErrorListener peer=%s request requestId=%s error=%v", p.String(), request.ID().String(), err)
-		m.exchange.CancelSubRequest(ctx, request.ID())
+		m.exchange.CancelSubRequest(ctxInternal, request.ID())
 	}))
-	m.RegisterCollectSpeedInfo(ctx)
+	m.RegisterCollectSpeedInfo(ctxInternal)
 
 	go func() {
 		defer func() {
 			m.close()
+			cancel()
 		}()
 
 		// collect subtree root cid
@@ -112,7 +115,7 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 				m.returnedErrors <- err
 				return
 			} else {
-				m.pushSubRequest(ctx, []subRequest{{
+				m.pushSubRequest(ctxInternal, []subRequest{{
 					Root:       m.rootCid,
 					Selector:   sel,
 					Extensions: m.extensions,
@@ -130,10 +133,10 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 					ResolveSubtreeRoot: true,
 				})
 			}
-			m.pushSubRequest(ctx, subtreeRootReqs)
+			m.pushSubRequest(ctxInternal, subtreeRootReqs)
 		}
 
-		m.handleRequest(ctx)
+		m.handleRequest(ctxInternal)
 	}()
 	return m.collectResponses(ctx, m.returnedResponses, m.returnedErrors, func() {
 		// cancel request
