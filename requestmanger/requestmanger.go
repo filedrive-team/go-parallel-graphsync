@@ -20,6 +20,8 @@ import (
 
 var log = logging.Logger("parrequestmanger")
 
+const SlowRequestDuration = 2000 // ms
+
 type subRequest struct {
 	Root       ipld.Link
 	Selector   ipld.Node
@@ -101,7 +103,7 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 		log.Infof("NetworkErrorListener peer=%s request requestId=%s error=%v", p.String(), request.ID().String(), err)
 		m.exchange.CancelSubRequest(ctxInternal, request.ID())
 	}))
-	m.RegisterCollectSpeedInfo(ctxInternal)
+	m.registerCollectMetrics(ctxInternal)
 
 	go func() {
 		defer func() {
@@ -497,9 +499,11 @@ func (m *ParallelRequestManger) close() {
 	}
 }
 
-func (m *ParallelRequestManger) RegisterCollectSpeedInfo(ctx context.Context) {
+func (m *ParallelRequestManger) registerCollectMetrics(ctx context.Context) {
 	type metrics struct {
-		start int64  // ms
+		start int64 // ms
+		last  int64 // ms
+		pid   peer.ID
 		cost  int64  // ms
 		size  uint64 // bytes
 		ttfb  int64  // ms
@@ -533,11 +537,12 @@ func (m *ParallelRequestManger) RegisterCollectSpeedInfo(ctx context.Context) {
 			func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
 				select {
 				case taskQueue <- task{
-					init:   false,
-					pid:    p,
-					rid:    responseData.RequestID(),
-					now:    time.Now().UnixMilli(),
-					size:   blockData.BlockSize(),
+					init: false,
+					pid:  p,
+					rid:  responseData.RequestID(),
+					now:  time.Now().UnixMilli(),
+					// in order to ignore the locally cached data
+					size:   blockData.BlockSizeOnWire(),
 					status: responseData.Status(),
 				}:
 				case <-ctx.Done():
@@ -545,6 +550,8 @@ func (m *ParallelRequestManger) RegisterCollectSpeedInfo(ctx context.Context) {
 			}))
 
 	go func() {
+		ticker := time.NewTicker(time.Millisecond * 250)
+		defer ticker.Stop()
 		metricsMap := make(map[graphsync.RequestID]*metrics)
 		for {
 			select {
@@ -552,6 +559,8 @@ func (m *ParallelRequestManger) RegisterCollectSpeedInfo(ctx context.Context) {
 				if tk.init {
 					metricsMap[tk.rid] = &metrics{
 						start: tk.now,
+						last:  tk.now,
+						pid:   tk.pid,
 					}
 				} else {
 					requestID := tk.rid
@@ -561,20 +570,42 @@ func (m *ParallelRequestManger) RegisterCollectSpeedInfo(ctx context.Context) {
 						continue
 					}
 
-					cost := tk.now - item.start
-					if cost > 0 {
+					// in order to ignore the locally cached data
+					if tk.size > 0 {
+						cost := tk.now - item.start
 						if item.ttfb == 0 {
 							item.ttfb = cost
 							m.pgManager.UpdateTTFB(tk.pid, cost)
 						}
 						item.cost = cost
 						item.size += tk.size
+						item.last = tk.now
 					}
 					if tk.status >= graphsync.RequestCompletedFull {
 						if item.cost > 0 {
 							m.pgManager.UpdateSpeed(tk.pid, int64(item.size)*1000/item.cost)
 						}
 						delete(metricsMap, requestID)
+					}
+				}
+			case <-ticker.C:
+				// have any available peers?
+				if len(m.requestChan) == 0 && m.pgManager.HasIdlePeer() {
+					// check slow request
+					for rid, item := range metricsMap {
+						interval := time.Now().UnixMilli() - item.last
+						if interval > SlowRequestDuration {
+							if !m.pgManager.IsBestPeer(item.pid) {
+								log.Debugw("CancelSubRequest", "requestId", rid, "peerId", item.pid)
+								var reqNotFound graphsync.RequestNotFoundErr
+								if err := m.exchange.CancelSubRequest(ctx, rid); err == nil || errors.As(err, &reqNotFound) {
+									delete(metricsMap, rid)
+									break
+								} else {
+									log.Errorw("CancelSubRequest error", "error", err, "requestId", rid)
+								}
+							}
+						}
 					}
 				}
 			case <-ctx.Done():

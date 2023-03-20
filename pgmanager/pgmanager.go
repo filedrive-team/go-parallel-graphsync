@@ -162,6 +162,29 @@ func (pm *PeerGroupManager) IsAllIdle() bool {
 	return true
 }
 
+func (pm *PeerGroupManager) HasIdlePeer() bool {
+	for _, p := range pm.peers {
+		if p.idle.Load() {
+			return true
+		}
+	}
+	return false
+}
+
 func (pm *PeerGroupManager) Close() {
 	close(pm.idleNotify)
+}
+
+func (pm *PeerGroupManager) IsBestPeer(p peer.ID) bool {
+	sort.Sort(pm.cache)
+	pi := pm.GetPeerInfo(p)
+	if pi == nil {
+		return false
+	}
+	for _, item := range pm.cache {
+		if item.idle.Load() && item.speed > pi.speed {
+			return false
+		}
+	}
+	return true
 }
