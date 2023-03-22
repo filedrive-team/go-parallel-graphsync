@@ -7,22 +7,27 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"go.uber.org/atomic"
 	"sort"
+	"sync"
 )
 
 var log = logging.Logger("pgmanager")
 
 type PeerGroupManager struct {
-	peers      map[peer.ID]*PeerInfo
-	cache      PeerInfos
-	idleNotify chan struct{}
+	peers        map[peer.ID]*PeerInfo
+	cache        PeerInfos
+	idleNotify   chan *PeerInfo
+	idleCallback func()
 }
 
 type PeerInfo struct {
-	peer   peer.ID
-	idle   atomic.Bool
-	ttfb   int64 // ms
-	speed  int64 // B/s
-	reqNum int64 // request number
+	peer              peer.ID
+	idle              atomic.Bool
+	wait              atomic.Bool // in wait period
+	waitCounter       int32
+	waitCounterLocker sync.Mutex
+	ttfb              int64 // ms
+	speed             int64 // B/s
+	reqNum            int64 // request number
 }
 
 func (pi PeerInfo) String() string {
@@ -51,7 +56,7 @@ func NewPeerGroupManager(peers []peer.ID) *PeerGroupManager {
 	mgr := &PeerGroupManager{
 		peers:      make(map[peer.ID]*PeerInfo),
 		cache:      make(PeerInfos, 0, len(peers)),
-		idleNotify: make(chan struct{}, len(peers)),
+		idleNotify: make(chan *PeerInfo, len(peers)),
 	}
 	for _, p := range peers {
 		pi := &PeerInfo{
@@ -60,7 +65,7 @@ func NewPeerGroupManager(peers []peer.ID) *PeerGroupManager {
 		pi.idle.Store(true)
 		mgr.peers[p] = pi
 		mgr.cache = append(mgr.cache, pi)
-		mgr.idleNotify <- struct{}{}
+		mgr.idleNotify <- pi
 	}
 	return mgr
 }
@@ -93,7 +98,10 @@ func (pm *PeerGroupManager) LockPeer(peerId peer.ID) bool {
 func (pm *PeerGroupManager) ReleasePeer(peerId peer.ID) {
 	if pi, ok := pm.peers[peerId]; ok {
 		pi.idle.Store(true)
-		pm.idleNotify <- struct{}{}
+		pm.idleNotify <- pi
+		if pm.idleCallback != nil {
+			pm.idleCallback()
+		}
 	}
 }
 
@@ -118,6 +126,16 @@ func (pm *PeerGroupManager) getIdlePeers(top int) []peer.ID {
 	resList := make([]peer.ID, 0, top)
 	sort.Sort(pm.cache)
 	for _, p := range pm.cache {
+		// check whether the peers have passed the waiting period
+		if p.wait.Load() {
+			p.waitCounterLocker.Lock()
+			p.waitCounter -= 1
+			if p.waitCounter == 0 {
+				p.wait.Store(true)
+			}
+			p.waitCounterLocker.Unlock()
+			continue
+		}
 		if pm.LockPeer(p.peer) {
 			p.reqNum += 1
 			resList = append(resList, p.peer)
@@ -137,12 +155,20 @@ func (pm *PeerGroupManager) WaitIdlePeers(ctx context.Context, top int) []peer.I
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-pm.idleNotify:
+		case pi := <-pm.idleNotify:
+			if pi.wait.Load() {
+				continue
+			}
 			ids := pm.getIdlePeers(top)
 			// removes a message that has been used up
 			remove := len(ids) - 1
-			for i := 0; i < remove; i++ {
-				<-pm.idleNotify
+			count := 0
+			for count < remove {
+				pi = <-pm.idleNotify
+				if pi.wait.Load() {
+					continue
+				}
+				count += 1
 			}
 			return ids
 		}
@@ -182,9 +208,27 @@ func (pm *PeerGroupManager) IsBestPeer(p peer.ID) bool {
 		return false
 	}
 	for _, item := range pm.cache {
-		if item.idle.Load() && item.speed > pi.speed {
-			return false
+		if item.idle.Load() && !item.wait.Load() {
+			if pi.speed == 0 && float64(item.ttfb) < float64(pi.ttfb) {
+				return false
+			}
+			if float64(item.speed) > 1.5*float64(pi.speed) {
+				return false
+			}
 		}
 	}
 	return true
+}
+
+func (pm *PeerGroupManager) SleepPeer(peerId peer.ID) {
+	if pi, ok := pm.peers[peerId]; ok {
+		pi.waitCounterLocker.Lock()
+		pi.waitCounter = 1
+		pi.waitCounterLocker.Unlock()
+		pi.wait.Store(true)
+	}
+}
+
+func (pm *PeerGroupManager) RegisterIdleCallback(callback func()) {
+	pm.idleCallback = callback
 }

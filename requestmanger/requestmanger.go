@@ -102,6 +102,7 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 	m.unregisterHookFuncs = append(m.unregisterHookFuncs, m.exchange.RegisterNetworkErrorListener(func(p peer.ID, request graphsync.RequestData, err error) {
 		log.Infof("NetworkErrorListener peer=%s request requestId=%s error=%v", p.String(), request.ID().String(), err)
 		m.exchange.CancelSubRequest(ctxInternal, request.ID())
+		m.pgManager.SleepPeer(p)
 	}))
 	m.registerCollectMetrics(ctxInternal)
 
@@ -258,6 +259,14 @@ func (m *ParallelRequestManger) syncSubtree(ctx context.Context, p peer.ID, requ
 				m.pushSubRequest(ctx, []subRequest{request})
 				return
 			}
+			log.Errorw("catch an error", "error", e, "peerId", p)
+			switch e.(type) {
+			case graphsync.RemoteMissingBlockErr:
+				// retry request
+				m.pushSubRequest(ctx, []subRequest{request})
+				//m.pgManager.SleepPeer(p)
+				return
+			}
 			m.returnedErrors <- e
 			// cancel this group request
 			exitCh <- struct{}{}
@@ -367,7 +376,7 @@ func (m *ParallelRequestManger) handleRequest(ctx context.Context) {
 		close(exitCh)
 		pis := m.pgManager.GetPeerInfoList()
 		for _, pi := range pis {
-			log.Debug(pi.String())
+			log.Info(pi.String())
 		}
 	}()
 	ctx, cancel := context.WithCancel(ctx)
@@ -549,10 +558,37 @@ func (m *ParallelRequestManger) registerCollectMetrics(ctx context.Context) {
 				}
 			}))
 
+	metricsMap := make(map[graphsync.RequestID]*metrics)
+	checkCh := make(chan int64, 1)
+	checkSlowRequest := func(duration int64) {
+		// have any available peers?
+		if len(m.requestChan) == 0 && m.pgManager.HasIdlePeer() {
+			// check slow request
+			for rid, item := range metricsMap {
+				interval := time.Now().UnixMilli() - item.last
+				if interval > duration {
+					if !m.pgManager.IsBestPeer(item.pid) {
+						log.Infow("cancel slow sub request", "requestId", rid, "peerId", item.pid)
+						var reqNotFound graphsync.RequestNotFoundErr
+						if err := m.exchange.CancelSubRequest(ctx, rid); err == nil || errors.As(err, &reqNotFound) {
+							m.pgManager.SleepPeer(item.pid)
+							delete(metricsMap, rid)
+							break
+						} else {
+							log.Errorw("CancelSubRequest error", "error", err, "requestId", rid)
+						}
+					}
+				}
+			}
+		}
+	}
+	m.pgManager.RegisterIdleCallback(func() {
+		// TODO: use ttfb of 95th
+		checkCh <- 50
+	})
 	go func() {
 		ticker := time.NewTicker(time.Millisecond * 250)
 		defer ticker.Stop()
-		metricsMap := make(map[graphsync.RequestID]*metrics)
 		for {
 			select {
 			case tk := <-taskQueue:
@@ -589,27 +625,12 @@ func (m *ParallelRequestManger) registerCollectMetrics(ctx context.Context) {
 					}
 				}
 			case <-ticker.C:
-				// have any available peers?
-				if len(m.requestChan) == 0 && m.pgManager.HasIdlePeer() {
-					// check slow request
-					for rid, item := range metricsMap {
-						interval := time.Now().UnixMilli() - item.last
-						if interval > SlowRequestDuration {
-							if !m.pgManager.IsBestPeer(item.pid) {
-								log.Debugw("CancelSubRequest", "requestId", rid, "peerId", item.pid)
-								var reqNotFound graphsync.RequestNotFoundErr
-								if err := m.exchange.CancelSubRequest(ctx, rid); err == nil || errors.As(err, &reqNotFound) {
-									delete(metricsMap, rid)
-									break
-								} else {
-									log.Errorw("CancelSubRequest error", "error", err, "requestId", rid)
-								}
-							}
-						}
-					}
-				}
+				checkSlowRequest(SlowRequestDuration)
+			case duration := <-checkCh:
+				checkSlowRequest(duration)
 			case <-ctx.Done():
 				close(taskQueue)
+				close(checkCh)
 				return
 			}
 		}
