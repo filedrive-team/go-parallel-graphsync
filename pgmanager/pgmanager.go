@@ -40,12 +40,12 @@ func (p PeerInfos) Len() int {
 	return len(p)
 }
 
-// speed first
+// ttfb first
 func (p PeerInfos) Less(i, j int) bool {
-	if p[i].speed == p[j].speed {
-		return p[i].ttfb < p[j].ttfb
+	if p[i].ttfb == p[j].ttfb {
+		return p[i].speed > p[j].speed
 	}
-	return p[i].speed > p[j].speed
+	return p[i].ttfb < p[j].ttfb
 }
 
 func (p PeerInfos) Swap(i, j int) {
@@ -231,4 +231,19 @@ func (pm *PeerGroupManager) SleepPeer(peerId peer.ID) {
 
 func (pm *PeerGroupManager) RegisterIdleCallback(callback func()) {
 	pm.idleCallback = callback
+}
+
+func (pm *PeerGroupManager) GetPeerTimeout() int64 {
+	ttfbList := make([]int, 0, len(pm.cache))
+	for _, item := range pm.cache {
+		if item.ttfb == 0 {
+			continue
+		}
+		ttfbList = append(ttfbList, int(item.ttfb))
+	}
+	if len(ttfbList) == 0 {
+		return 1000
+	}
+	sort.Ints(ttfbList)
+	return int64(float64(ttfbList[0]) * 1.5)
 }

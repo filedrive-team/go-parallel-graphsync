@@ -20,8 +20,6 @@ import (
 
 var log = logging.Logger("parrequestmanger")
 
-const SlowRequestDuration = 2000 // ms
-
 type subRequest struct {
 	Root       ipld.Link
 	Selector   ipld.Node
@@ -560,18 +558,22 @@ func (m *ParallelRequestManger) registerCollectMetrics(ctx context.Context) {
 
 	metricsMap := make(map[graphsync.RequestID]*metrics)
 	checkCh := make(chan int64, 1)
-	checkSlowRequest := func(duration int64) {
+	checkSlowRequest := func(timeout int64) {
 		// have any available peers?
 		if len(m.requestChan) == 0 && m.pgManager.HasIdlePeer() {
 			// check slow request
 			for rid, item := range metricsMap {
 				interval := time.Now().UnixMilli() - item.last
-				if interval > duration {
+				if interval > timeout {
 					if !m.pgManager.IsBestPeer(item.pid) {
 						log.Infow("cancel slow sub request", "requestId", rid, "peerId", item.pid)
 						var reqNotFound graphsync.RequestNotFoundErr
 						if err := m.exchange.CancelSubRequest(ctx, rid); err == nil || errors.As(err, &reqNotFound) {
 							m.pgManager.SleepPeer(item.pid)
+							if item.ttfb == 0 {
+								// set the current timeout as its ttfb
+								m.pgManager.UpdateTTFB(item.pid, timeout)
+							}
 							delete(metricsMap, rid)
 							break
 						} else {
@@ -583,8 +585,10 @@ func (m *ParallelRequestManger) registerCollectMetrics(ctx context.Context) {
 		}
 	}
 	m.pgManager.RegisterIdleCallback(func() {
-		// TODO: use ttfb of 95th
-		checkCh <- 50
+		select {
+		case checkCh <- m.pgManager.GetPeerTimeout():
+		default:
+		}
 	})
 	go func() {
 		ticker := time.NewTicker(time.Millisecond * 250)
@@ -625,9 +629,12 @@ func (m *ParallelRequestManger) registerCollectMetrics(ctx context.Context) {
 					}
 				}
 			case <-ticker.C:
-				checkSlowRequest(SlowRequestDuration)
-			case duration := <-checkCh:
-				checkSlowRequest(duration)
+				select {
+				case checkCh <- m.pgManager.GetPeerTimeout():
+				default:
+				}
+			case timeout := <-checkCh:
+				checkSlowRequest(timeout)
 			case <-ctx.Done():
 				close(taskQueue)
 				close(checkCh)
