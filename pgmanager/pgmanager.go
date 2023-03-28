@@ -25,7 +25,7 @@ type PeerInfo struct {
 	wait              atomic.Bool // in wait period
 	waitCounter       int32
 	waitCounterLocker sync.Mutex
-	ttfb              int64 // ms
+	ttfb              int64 // ms (Time To First Block)
 	speed             int64 // B/s
 	reqNum            int64 // request number
 }

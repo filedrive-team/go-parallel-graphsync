@@ -252,17 +252,11 @@ func (m *ParallelRequestManger) syncSubtree(ctx context.Context, p peer.ID, requ
 	go func() {
 		defer wg.Done()
 		for e := range errorChan {
-			if _, ok := e.(graphsync.RequestClientCancelledErr); ok {
-				// retry request
-				m.pushSubRequest(ctx, []subRequest{request})
-				return
-			}
-			log.Errorw("catch an error", "error", e, "peerId", p)
 			switch e.(type) {
-			case graphsync.RemoteMissingBlockErr:
+			case graphsync.RequestClientCancelledErr, graphsync.RemoteMissingBlockErr:
+				log.Debugw("catch an error", "error", e, "peerId", p)
 				// retry request
 				m.pushSubRequest(ctx, []subRequest{request})
-				//m.pgManager.SleepPeer(p)
 				return
 			}
 			m.returnedErrors <- e
