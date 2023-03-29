@@ -33,6 +33,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 var globalHost host.Host
@@ -52,7 +53,7 @@ func TestMain(m *testing.M) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 
-	addrInfos, err := startSomeGraphSyncServices(mainCtx, ServicesNum, 9010, false, "car-v2.car")
+	addrInfos, err := startSomeGraphSyncServices(mainCtx, ServicesNum, 9010, false, "car-v2.car", nil)
 	if err != nil {
 		panic(err)
 	}
@@ -172,7 +173,7 @@ func loadCarV2Blockstore(path string) (*carv2bs.ReadOnly, error) {
 	return bs, nil
 }
 
-func startGraphSyncService(ctx context.Context, listenAddr string, peerkey crypto.PrivKey, bs blockstore.Blockstore, printLog bool) (graphsync.GraphExchange, error) {
+func startGraphSyncService(ctx context.Context, listenAddr string, peerkey crypto.PrivKey, bs blockstore.Blockstore, printLog bool, latency time.Duration) (graphsync.GraphExchange, error) {
 	cmgr, err := connmgr.NewConnManager(2000, 3000)
 	if err != nil {
 		return nil, err
@@ -255,6 +256,11 @@ func startGraphSyncService(ctx context.Context, listenAddr string, peerkey crypt
 			fmt.Printf("RegisterRequestUpdatedHook peer=%s request requestId=%s\n", p.String(), request.ID().String())
 		})
 	}
+	exchange.RegisterOutgoingBlockHook(func(p peer.ID, request graphsync.RequestData, block graphsync.BlockData, hookActions graphsync.OutgoingBlockHookActions) {
+		if latency > 0 && block.BlockSizeOnWire() > 0 {
+			time.Sleep(latency)
+		}
+	})
 	return exchange, nil
 }
 
@@ -288,15 +294,15 @@ func startGraphSyncClient(ctx context.Context, listenAddr string, keyFile string
 	return host, exchange, nil
 }
 
-func startSomeGraphSyncServices(ctx context.Context, number int, portStart int, printLog bool, path string) ([]peer.AddrInfo, error) {
+func startSomeGraphSyncServices(ctx context.Context, number int, portStart int, printLog bool, path string, latencyList []time.Duration) ([]peer.AddrInfo, error) {
 	bs, err := loadCarV2Blockstore(path)
 	if err != nil {
 		return nil, err
 	}
-	return startSomeGraphSyncServicesByBlockStore(ctx, number, portStart, bs, printLog)
+	return startSomeGraphSyncServicesByBlockStore(ctx, number, portStart, bs, printLog, latencyList)
 }
 
-func startSomeGraphSyncServicesByBlockStore(ctx context.Context, number int, portStart int, bs blockstore.Blockstore, printLog bool) ([]peer.AddrInfo, error) {
+func startSomeGraphSyncServicesByBlockStore(ctx context.Context, number int, portStart int, bs blockstore.Blockstore, printLog bool, latencyList []time.Duration) ([]peer.AddrInfo, error) {
 	var addrInfos []peer.AddrInfo
 	for i := 0; i < number; i++ {
 		keyFile := path.Join(os.TempDir(), fmt.Sprintf("globalParExchange-key%d", portStart+i))
@@ -317,7 +323,11 @@ func startSomeGraphSyncServicesByBlockStore(ctx context.Context, number int, por
 			Addrs: []multiaddr.Multiaddr{maddr},
 		})
 		go func(i int) {
-			_, err := startGraphSyncService(ctx, maddr.String(), peerkey, bs, printLog)
+			latency := time.Duration(0)
+			if len(latencyList) > i {
+				latency = latencyList[i]
+			}
+			_, err := startGraphSyncService(ctx, maddr.String(), peerkey, bs, printLog, latency)
 			if err != nil {
 				panic(err)
 			}
