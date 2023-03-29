@@ -639,6 +639,23 @@ func BenchmarkGraphSync(b *testing.B) {
 			}()
 			for range responseProgress {
 			}
+			if false {
+				// restore to a file
+				rdag := merkledag.NewDAGService(blockservice.New(membs, offline.Exchange(membs)))
+				nd, err := rdag.Get(mainCtx, rootCid)
+				if err != nil {
+					b.Fatal(err)
+				}
+				file, err := unixfile.NewUnixfsFile(mainCtx, rdag, nd)
+				if err != nil {
+					b.Fatal(err)
+				}
+				filePath := path.Join(b.TempDir(), "nft")
+				err = NodeWriteTo(file, filePath)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
 		}
 	}
 
