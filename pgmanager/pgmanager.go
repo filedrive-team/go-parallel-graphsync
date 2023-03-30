@@ -12,6 +12,8 @@ import (
 
 var log = logging.Logger("pgmanager")
 
+const SmoothFactor = 1.5
+
 type PeerGroupManager struct {
 	peers        map[peer.ID]*PeerInfo
 	cache        PeerInfos
@@ -20,14 +22,14 @@ type PeerGroupManager struct {
 }
 
 type PeerInfo struct {
-	peer              peer.ID
-	idle              atomic.Bool
-	wait              atomic.Bool // in wait period
-	waitCounter       int32
-	waitCounterLocker sync.Mutex
-	ttfb              int64 // ms (Time To First Block)
-	speed             int64 // B/s
-	reqNum            int64 // request number
+	peer             peer.ID
+	idle             atomic.Bool
+	wait             atomic.Bool // in wait period
+	waitPeriod       int32
+	waitPeriodLocker sync.Mutex
+	ttfb             int64 // ms (Time To First Block)
+	speed            int64 // B/s
+	reqNum           int64 // request number
 }
 
 func (pi PeerInfo) String() string {
@@ -128,12 +130,12 @@ func (pm *PeerGroupManager) getIdlePeers(top int) []peer.ID {
 	for _, p := range pm.cache {
 		// check whether the peers have passed the waiting period
 		if p.wait.Load() {
-			p.waitCounterLocker.Lock()
-			p.waitCounter -= 1
-			if p.waitCounter == 0 {
+			p.waitPeriodLocker.Lock()
+			p.waitPeriod -= 1
+			if p.waitPeriod == 0 {
 				p.wait.Store(true)
 			}
-			p.waitCounterLocker.Unlock()
+			p.waitPeriodLocker.Unlock()
 			continue
 		}
 		if pm.LockPeer(p.peer) {
@@ -162,8 +164,7 @@ func (pm *PeerGroupManager) WaitIdlePeers(ctx context.Context, top int) []peer.I
 			ids := pm.getIdlePeers(top)
 			// removes a message that has been used up
 			remove := len(ids) - 1
-			count := 0
-			for count < remove {
+			for count := 0; count < remove; {
 				pi = <-pm.idleNotify
 				if pi.wait.Load() {
 					continue
@@ -212,7 +213,7 @@ func (pm *PeerGroupManager) IsBestPeer(p peer.ID) bool {
 			if pi.speed == 0 && float64(item.ttfb) < float64(pi.ttfb) {
 				return false
 			}
-			if float64(item.speed) > 1.5*float64(pi.speed) {
+			if float64(item.speed) > SmoothFactor*float64(pi.speed) {
 				return false
 			}
 		}
@@ -222,9 +223,9 @@ func (pm *PeerGroupManager) IsBestPeer(p peer.ID) bool {
 
 func (pm *PeerGroupManager) SleepPeer(peerId peer.ID) {
 	if pi, ok := pm.peers[peerId]; ok {
-		pi.waitCounterLocker.Lock()
-		pi.waitCounter = 1
-		pi.waitCounterLocker.Unlock()
+		pi.waitPeriodLocker.Lock()
+		pi.waitPeriod = 1
+		pi.waitPeriodLocker.Unlock()
 		pi.wait.Store(true)
 	}
 }
@@ -245,5 +246,5 @@ func (pm *PeerGroupManager) GetPeerTimeout() int64 {
 		return 1000
 	}
 	sort.Ints(ttfbList)
-	return int64(float64(ttfbList[0]) * 1.5)
+	return int64(float64(ttfbList[0]) * SmoothFactor)
 }
