@@ -569,7 +569,7 @@ func BenchmarkGraphSync(b *testing.B) {
 		600 * time.Millisecond,
 		25 * time.Millisecond,
 		300 * time.Millisecond,
-		20 * time.Millisecond,
+		26 * time.Millisecond,
 		40 * time.Millisecond,
 	}
 	servbs, rootCid := CreateRandomBytesBlockStore(mainCtx, 290*1024*1024)
