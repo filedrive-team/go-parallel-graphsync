@@ -13,7 +13,6 @@ import (
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/ipld/go-ipld-prime"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"math"
 	"strings"
 	"sync"
 	"time"
@@ -88,6 +87,7 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 		if util.IsAllSelector(m.selector) {
 			isAllSel = true
 		} else {
+			defer m.close()
 			peerId := m.pgManager.WaitIdlePeers(ctx, 1)
 			if len(peerId) == 0 {
 				return m.singleErrorResponse(errors.New("no idle peer"))
@@ -96,15 +96,18 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 		}
 	}
 
+	ctxInternal, cancel := context.WithCancel(ctx)
 	m.unregisterHookFuncs = append(m.unregisterHookFuncs, m.exchange.RegisterNetworkErrorListener(func(p peer.ID, request graphsync.RequestData, err error) {
 		log.Infof("NetworkErrorListener peer=%s request requestId=%s error=%v", p.String(), request.ID().String(), err)
-		m.exchange.CancelSubRequest(ctx, request.ID())
+		m.exchange.CancelSubRequest(ctxInternal, request.ID())
+		m.pgManager.SleepPeer(p)
 	}))
-	m.RegisterCollectSpeedInfo(ctx)
+	m.registerCollectMetrics(ctxInternal)
 
 	go func() {
 		defer func() {
 			m.close()
+			cancel()
 		}()
 
 		// collect subtree root cid
@@ -113,7 +116,7 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 				m.returnedErrors <- err
 				return
 			} else {
-				m.pushSubRequest(ctx, []subRequest{{
+				m.pushSubRequest(ctxInternal, []subRequest{{
 					Root:       m.rootCid,
 					Selector:   sel,
 					Extensions: m.extensions,
@@ -131,10 +134,10 @@ func (m *ParallelRequestManger) Start(ctx context.Context) (<-chan graphsync.Res
 					ResolveSubtreeRoot: true,
 				})
 			}
-			m.pushSubRequest(ctx, subtreeRootReqs)
+			m.pushSubRequest(ctxInternal, subtreeRootReqs)
 		}
 
-		m.handleRequest(ctx)
+		m.handleRequest(ctxInternal)
 	}()
 	return m.collectResponses(ctx, m.returnedResponses, m.returnedErrors, func() {
 		// cancel request
@@ -249,7 +252,9 @@ func (m *ParallelRequestManger) syncSubtree(ctx context.Context, p peer.ID, requ
 	go func() {
 		defer wg.Done()
 		for e := range errorChan {
-			if _, ok := e.(graphsync.RequestClientCancelledErr); ok {
+			switch e.(type) {
+			case graphsync.RequestClientCancelledErr, graphsync.RemoteMissingBlockErr:
+				log.Debugw("catch an error", "error", e, "peerId", p)
 				// retry request
 				m.pushSubRequest(ctx, []subRequest{request})
 				return
@@ -293,6 +298,10 @@ func (m *ParallelRequestManger) syncSubtree(ctx context.Context, p peer.ID, requ
 				path := blk.Path.String()
 				links := nd.Length()
 				peers := int64(m.pgManager.GetPeerCount())
+				// If there are too many tasks to be processed, they are not evenly divided to quickly reduce the number of requests
+				if len(m.requestChan) > int(2*peers) {
+					peers = 1
+				}
 				requests := make([]subRequest, 0, peers)
 				usedLinks := int64(0)
 				for index := int64(0); index < peers; index++ {
@@ -352,11 +361,15 @@ func (m *ParallelRequestManger) handleRequest(ctx context.Context) {
 	defer func() {
 		go func() {
 			// remove unnecessary exit signals
-			for _ = range exitCh {
+			for range exitCh {
 			}
 		}()
 		wg.Wait()
 		close(exitCh)
+		pis := m.pgManager.GetPeerInfoList()
+		for _, pi := range pis {
+			log.Info(pi.String())
+		}
 	}()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -369,8 +382,6 @@ func (m *ParallelRequestManger) handleRequest(ctx context.Context) {
 				// exit
 				return
 			}
-			// TODO: merge multiple existing requests based on the number of idle peers
-			// len(m.requestChan)
 			for i, p := range peers {
 				wg.Add(1)
 				go func(index int, id peer.ID) {
@@ -417,6 +428,58 @@ func (m *ParallelRequestManger) pushSubRequest(ctx context.Context, reqs []subRe
 	}
 }
 
+// The actual testing of merge requests is not ideal
+func (m *ParallelRequestManger) mergeSubRequest(request []subRequest) []subRequest {
+	log.Infof("before merging, request length: %v", len(request))
+	defer func() {
+		log.Infof("after merging, request length: %v", len(request))
+	}()
+	newRequests := make([]subRequest, 0, len(request))
+	subReqs := make([]subRequest, 0, 8)
+	for _, subReq := range request {
+		if subReq.Path != "" {
+			subReqs = append(subReqs, subReq)
+		} else {
+			newRequests = append(newRequests, subReq)
+		}
+	}
+	if len(subReqs) > 1 {
+		remain := len(request) - len(subReqs)
+		if remain >= m.pgManager.GetPeerCount()-1 {
+			// merge multiple existing requests based on the number of idle peers
+			subReqMap := make(map[string][]subRequest)
+			for _, r := range subReqs {
+				if item, ok := subReqMap[r.Root.String()]; ok {
+					item = append(item, r)
+					subReqMap[r.Root.String()] = item
+				} else {
+					subReqMap[r.Root.String()] = []subRequest{r}
+				}
+			}
+			for _, reqs := range subReqMap {
+				paths := make([]string, 0, len(reqs))
+				for _, req := range reqs {
+					paths = append(paths, req.Path)
+				}
+				sel, err := util.UnionPathSelector(paths, true)
+				if err != nil {
+					log.Debugf("UnionPathSelector error: %v", err)
+					newRequests = append(newRequests, reqs...)
+				} else {
+					log.Debugf("merged request selector: %s", util.SelectorToJson(sel))
+					newRequests = append(newRequests, subRequest{
+						Root:       reqs[0].Root,
+						Selector:   sel,
+						Extensions: reqs[0].Extensions,
+					})
+				}
+			}
+			request = newRequests
+		}
+	}
+	return request
+}
+
 func generateKey(root ipld.Link, sel ipld.Node) string {
 	var s strings.Builder
 	s.WriteString(root.String())
@@ -437,41 +500,11 @@ func (m *ParallelRequestManger) close() {
 	}
 }
 
-func (m *ParallelRequestManger) dividePaths(ctx context.Context, paths []string) []subRequest {
-	ave := Ceil(len(paths), m.pgManager.GetPeerCount())
-	var start, end = 0, 0
-	num := m.pgManager.GetPeerCount()
-	if num > len(paths) {
-		num = len(paths)
-	}
-	var requests []subRequest
-	for i := 0; i < num; i++ {
-		end = start + ave
-		if i == num-1 {
-			end = len(paths)
-		}
-		sel, err := util.UnionPathSelector(paths[start:end], true)
-		// continue or return
-		if err != nil {
-			m.returnedErrors <- err
-		}
-		requests = append(requests, subRequest{
-			Root:       m.rootCid,
-			Selector:   sel,
-			Extensions: m.extensions,
-		})
-		start = end
-	}
-	return requests
-}
-
-func Ceil(x, y int) int {
-	return int(math.Ceil(float64(x) / float64(y)))
-}
-
-func (m *ParallelRequestManger) RegisterCollectSpeedInfo(ctx context.Context) {
+func (m *ParallelRequestManger) registerCollectMetrics(ctx context.Context) {
 	type metrics struct {
-		start int64  // ms
+		start int64 // ms
+		last  int64 // ms
+		pid   peer.ID
 		cost  int64  // ms
 		size  uint64 // bytes
 		ttfb  int64  // ms
@@ -486,41 +519,82 @@ func (m *ParallelRequestManger) RegisterCollectSpeedInfo(ctx context.Context) {
 	}
 	taskQueue := make(chan task, 1000)
 
-	m.unregisterHookFuncs = append(m.unregisterHookFuncs, m.exchange.RegisterOutgoingRequestHook(func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
-		select {
-		case taskQueue <- task{
-			init: true,
-			pid:  p,
-			rid:  request.ID(),
-			now:  time.Now().UnixMilli(),
-		}:
-		case <-ctx.Done():
-		}
+	m.unregisterHookFuncs = append(m.unregisterHookFuncs,
+		m.exchange.RegisterOutgoingRequestHook(
+			func(p peer.ID, request graphsync.RequestData, hookActions graphsync.OutgoingRequestHookActions) {
+				select {
+				case taskQueue <- task{
+					init: true,
+					pid:  p,
+					rid:  request.ID(),
+					now:  time.Now().UnixMilli(),
+				}:
+				case <-ctx.Done():
+				}
 
-	}))
-	m.unregisterHookFuncs = append(m.unregisterHookFuncs, m.exchange.RegisterIncomingBlockHook(func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData,
-		hookActions graphsync.IncomingBlockHookActions) {
-		select {
-		case taskQueue <- task{
-			init:   false,
-			pid:    p,
-			rid:    responseData.RequestID(),
-			now:    time.Now().UnixMilli(),
-			size:   blockData.BlockSize(),
-			status: responseData.Status(),
-		}:
-		case <-ctx.Done():
-		}
-	}))
+			}))
+	m.unregisterHookFuncs = append(m.unregisterHookFuncs,
+		m.exchange.RegisterIncomingBlockHook(
+			func(p peer.ID, responseData graphsync.ResponseData, blockData graphsync.BlockData, hookActions graphsync.IncomingBlockHookActions) {
+				select {
+				case taskQueue <- task{
+					init: false,
+					pid:  p,
+					rid:  responseData.RequestID(),
+					now:  time.Now().UnixMilli(),
+					// in order to ignore the locally cached data
+					size:   blockData.BlockSizeOnWire(),
+					status: responseData.Status(),
+				}:
+				case <-ctx.Done():
+				}
+			}))
 
+	metricsMap := make(map[graphsync.RequestID]*metrics)
+	checkCh := make(chan int64, 1)
+	checkSlowRequest := func(timeout int64) {
+		// have any available peers?
+		if len(m.requestChan) == 0 && m.pgManager.HasIdlePeer() {
+			// check slow request
+			for rid, item := range metricsMap {
+				interval := time.Now().UnixMilli() - item.last
+				if interval > timeout {
+					if !m.pgManager.IsBestPeer(item.pid) {
+						log.Infow("cancel slow sub request", "requestId", rid, "peerId", item.pid)
+						var reqNotFound graphsync.RequestNotFoundErr
+						if err := m.exchange.CancelSubRequest(ctx, rid); err == nil || errors.As(err, &reqNotFound) {
+							m.pgManager.SleepPeer(item.pid)
+							if item.ttfb == 0 {
+								// set the current timeout as its ttfb
+								m.pgManager.UpdateTTFB(item.pid, timeout)
+							}
+							delete(metricsMap, rid)
+							break
+						} else {
+							log.Errorw("CancelSubRequest error", "error", err, "requestId", rid)
+						}
+					}
+				}
+			}
+		}
+	}
+	m.pgManager.RegisterIdleCallback(func() {
+		select {
+		case checkCh <- m.pgManager.GetPeerTimeout():
+		default:
+		}
+	})
 	go func() {
-		metricsMap := make(map[graphsync.RequestID]*metrics)
+		ticker := time.NewTicker(time.Millisecond * 250)
+		defer ticker.Stop()
 		for {
 			select {
 			case tk := <-taskQueue:
 				if tk.init {
 					metricsMap[tk.rid] = &metrics{
 						start: tk.now,
+						last:  tk.now,
+						pid:   tk.pid,
 					}
 				} else {
 					requestID := tk.rid
@@ -530,14 +604,16 @@ func (m *ParallelRequestManger) RegisterCollectSpeedInfo(ctx context.Context) {
 						continue
 					}
 
-					cost := tk.now - item.start
-					if cost > 0 {
+					// in order to ignore the locally cached data
+					if tk.size > 0 {
+						cost := tk.now - item.start
 						if item.ttfb == 0 {
 							item.ttfb = cost
 							m.pgManager.UpdateTTFB(tk.pid, cost)
 						}
 						item.cost = cost
 						item.size += tk.size
+						item.last = tk.now
 					}
 					if tk.status >= graphsync.RequestCompletedFull {
 						if item.cost > 0 {
@@ -546,8 +622,16 @@ func (m *ParallelRequestManger) RegisterCollectSpeedInfo(ctx context.Context) {
 						delete(metricsMap, requestID)
 					}
 				}
+			case <-ticker.C:
+				select {
+				case checkCh <- m.pgManager.GetPeerTimeout():
+				default:
+				}
+			case timeout := <-checkCh:
+				checkSlowRequest(timeout)
 			case <-ctx.Done():
 				close(taskQueue)
+				close(checkCh)
 				return
 			}
 		}

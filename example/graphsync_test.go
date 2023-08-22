@@ -76,7 +76,7 @@ func TestUnixfsPathGraphSync(t *testing.T) {
 	dagjson.Encode(sel, &s)
 	t.Logf(s.String())
 	mainCtx := context.TODO()
-	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9135, serverbs, false)
+	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9135, serverbs, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

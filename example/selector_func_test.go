@@ -29,7 +29,7 @@ func startWithBigCar(ctx context.Context) {
 	//mainCtx, cancel := context.WithCancel(context.Background())
 	//defer cancel()
 
-	addrInfos, err := startSomeGraphSyncServices(ctx, ServicesNum, 9030, false, "big-v2.car")
+	addrInfos, err := startSomeGraphSyncServices(ctx, ServicesNum, 9030, false, "big-v2.car", nil)
 	if err != nil {
 		panic(err)
 	}
@@ -216,7 +216,7 @@ func TestSimpleParseGivenUnixFSSelector(t *testing.T) {
 	}
 	root, _ := cid.Parse("QmfDBQsFWphnYYxjdAjqnqhV1fWzH7DKKamPnC1rdXupma")
 	mainCtx := context.TODO()
-	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9236, serverbs, false)
+	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9236, serverbs, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

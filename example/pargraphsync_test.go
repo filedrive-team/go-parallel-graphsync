@@ -108,7 +108,7 @@ func TestParallelGraphSync2(t *testing.T) {
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 	const ServicesNum = 3
-	addrInfos, err := startSomeGraphSyncServices(mainCtx, ServicesNum, 9050, false, "QmREu6imfQ38NgCuSWMX5i9Vj9UATvF2CJfPoRu49p58iz.car")
+	addrInfos, err := startSomeGraphSyncServices(mainCtx, ServicesNum, 9050, false, "QmREu6imfQ38NgCuSWMX5i9Vj9UATvF2CJfPoRu49p58iz.car", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -559,12 +559,21 @@ func TestParGraphSyncRequestMangerParseSelector(t *testing.T) {
 }
 
 func BenchmarkGraphSync(b *testing.B) {
-	//logging.SetLogLevel("parrequestmanger", "Debug")
+	//logging.SetLogLevel("parrequestmanger", "Info")
+	//logging.SetLogLevel("pgmanager", "Debug")
 	mainCtx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 	const ServicesNum = 6
+	latencyList := []time.Duration{
+		20 * time.Millisecond,
+		600 * time.Millisecond,
+		25 * time.Millisecond,
+		300 * time.Millisecond,
+		26 * time.Millisecond,
+		40 * time.Millisecond,
+	}
 	servbs, rootCid := CreateRandomBytesBlockStore(mainCtx, 290*1024*1024)
-	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9110, servbs, false)
+	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9110, servbs, false, latencyList)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -587,6 +596,7 @@ func BenchmarkGraphSync(b *testing.B) {
 		host.Peerstore().AddAddr(addrInfos[i].ID, addrInfos[i].Addrs[0], peerstore.PermanentAddrTTL)
 
 		peerIds = append(peerIds, addrInfos[i].ID)
+		b.Logf("peerId: %s latency: %v", addrInfos[i].ID, latencyList[i])
 	}
 
 	// graphsync init
@@ -628,6 +638,23 @@ func BenchmarkGraphSync(b *testing.B) {
 				}
 			}()
 			for range responseProgress {
+			}
+			if false {
+				// restore to a file
+				rdag := merkledag.NewDAGService(blockservice.New(membs, offline.Exchange(membs)))
+				nd, err := rdag.Get(mainCtx, rootCid)
+				if err != nil {
+					b.Fatal(err)
+				}
+				file, err := unixfile.NewUnixfsFile(mainCtx, rdag, nd)
+				if err != nil {
+					b.Fatal(err)
+				}
+				filePath := path.Join(b.TempDir(), "nft")
+				err = NodeWriteTo(file, filePath)
+				if err != nil {
+					b.Fatal(err)
+				}
 			}
 		}
 	}
@@ -697,7 +724,7 @@ func TestParallelGraphSyncControl(t *testing.T) {
 	defer cancel()
 	const ServicesNum = 3
 	servbs, rootCid := CreateRandomBytesBlockStore(mainCtx, 300*1024*1024)
-	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9310, servbs, false)
+	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9310, servbs, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -763,7 +790,7 @@ func TestParallelGraphSyncCancel(t *testing.T) {
 	defer cancel()
 	const ServicesNum = 3
 	servbs, rootCid := CreateRandomBytesBlockStore(mainCtx, 300*1024*1024)
-	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9310, servbs, false)
+	addrInfos, err := startSomeGraphSyncServicesByBlockStore(mainCtx, ServicesNum, 9310, servbs, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
