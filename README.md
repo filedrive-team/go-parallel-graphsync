@@ -2,7 +2,7 @@
 
 ### Project Description
 
-Currently, most projects in Filecoin Retrieval Market use GraphSync to synchronize data.
+Currently, most projects in Filecoin Retrieval Market use [GraphSync](https://github.com/ipfs/go-graphsync) to synchronize data.
 
 GraphSync works well when synchronizing small-volume files. Users can synchronize these multiple files from different nodes by downloading them in parallel. This way could spread the bandwidth pressure of one single node and shorten the synchronization time.
 
@@ -142,18 +142,24 @@ goarch: amd64
 pkg: github.com/filedrive-team/go-parallel-graphsync/example
 cpu: Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz
 BenchmarkGraphSync
+    pargraphsync_test.go:599: peerId: 12D3KooWScBXkrSWH8vREGXSzNe3HEGDeRByWrytFr1G9BhQRJtj latency: 20ms
+    pargraphsync_test.go:599: peerId: 12D3KooWEfPLL4YQ1JpUir4R2tZoxcjrD78tUK6KzQd9ecFcx6zB latency: 600ms
+    pargraphsync_test.go:599: peerId: 12D3KooWFD11Qx1MPPksb8H3bvGBnRpwJywbmf8173Uhquzna43m latency: 25ms
+    pargraphsync_test.go:599: peerId: 12D3KooWAuScHgMXuVbWz8vYYVifFVaxyxBZwtyims98esGZ341k latency: 300ms
+    pargraphsync_test.go:599: peerId: 12D3KooWAdoznehjYnmJezqwu6AsYwMHAP8dPk2sXfx7isemnwoB latency: 26ms
+    pargraphsync_test.go:599: peerId: 12D3KooWB8WSx93KRVETxTF7Q4sSiLAUQQSXoFKjXTjtA632hgRH latency: 40ms
 BenchmarkGraphSync/Parallel-Graphsync_request_to_2_services
-BenchmarkGraphSync/Parallel-Graphsync_request_to_2_services-12                20         390876203 ns/op        938268084 B/op    175393 allocs/op
+BenchmarkGraphSync/Parallel-Graphsync_request_to_2_services-12                20        6114752715 ns/op        945141576 B/op    251551 allocs/op
 BenchmarkGraphSync/Parallel-Graphsync_request_to_3_services
-BenchmarkGraphSync/Parallel-Graphsync_request_to_3_services-12                20         325782454 ns/op        938266822 B/op    185398 allocs/op
+BenchmarkGraphSync/Parallel-Graphsync_request_to_3_services-12                20        4078232365 ns/op        944034287 B/op    237269 allocs/op
 BenchmarkGraphSync/Parallel-Graphsync_request_to_4_services
-BenchmarkGraphSync/Parallel-Graphsync_request_to_4_services-12                20         298436154 ns/op        938784545 B/op    191882 allocs/op
+BenchmarkGraphSync/Parallel-Graphsync_request_to_4_services-12                20        3723480395 ns/op        948365954 B/op    249734 allocs/op
 BenchmarkGraphSync/Parallel-Graphsync_request_to_5_services
-BenchmarkGraphSync/Parallel-Graphsync_request_to_5_services-12                20         275989534 ns/op        939239594 B/op    201498 allocs/op
+BenchmarkGraphSync/Parallel-Graphsync_request_to_5_services-12                20        3009754078 ns/op        948281245 B/op    251301 allocs/op
 BenchmarkGraphSync/Parallel-Graphsync_request_to_6_services
-BenchmarkGraphSync/Parallel-Graphsync_request_to_6_services-12                20         275903957 ns/op        939730288 B/op    212451 allocs/op
+BenchmarkGraphSync/Parallel-Graphsync_request_to_6_services-12                20        2518337921 ns/op        952988479 B/op    266350 allocs/op
 BenchmarkGraphSync/Graphsync_request_to_1_service
-BenchmarkGraphSync/Graphsync_request_to_1_service-12                          20         544641223 ns/op        932732274 B/op    166017 allocs/op
+BenchmarkGraphSync/Graphsync_request_to_1_service-12                          20        6174913552 ns/op        936396342 B/op    231778 allocs/op
 PASS
-ok      github.com/filedrive-team/go-parallel-graphsync/example 45.814s
+ok      github.com/filedrive-team/go-parallel-graphsync/example 540.403s
 ```
